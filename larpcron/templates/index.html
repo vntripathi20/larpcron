@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LarpCron</title>
+<style>
+  :root {
+    --bg:#0c0e1a; --bar:#11101c; --paper:rgba(19,18,31,.92); --field:#0d0d19;
+    --ink:#efe6d8; --muted:#a9a095; --line:#38354a;
+    --accent:#e8a24f; --accent-ink:#1b1208; --ok:#8cc79a; --warn:#e8b45f; --bad:#f08c80;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html { scroll-padding-top:100px; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 var(--sans); }
+  /* Background photo (CC0, see README) with a dark wash so text stays readable. */
+  body::before { content:""; position:fixed; inset:0; z-index:-1;
+    background:linear-gradient(rgba(8,9,20,.55), rgba(8,9,20,.72)), url(/static/city.jpg) center bottom / cover no-repeat; }
+  a { color:var(--accent); }
+  code { font:14px ui-monospace, Menlo, Consolas, monospace; background:rgba(127,115,95,.14); padding:1px 5px; border-radius:3px; }
+  h1,h2,h3 { font-family:var(--serif); font-weight:700; line-height:1.25; }
+
+  header { position:sticky; top:0; z-index:10; background:var(--bar); border-bottom:1px solid var(--line); }
+  .bar { max-width:900px; margin:0 auto; padding:12px 16px 0; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .logo { font:700 22px var(--serif); margin-right:auto; }
+  .status { color:var(--muted); font-size:14px; }
+  .actions { display:flex; gap:8px; align-items:center; }
+  nav { max-width:900px; margin:0 auto; padding:6px 16px 0; display:flex; gap:20px; overflow-x:auto; }
+  nav button { background:none; border:0; border-bottom:3px solid transparent; padding:8px 0; font:inherit; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  nav button.active { color:var(--ink); border-color:var(--accent); font-weight:600; }
+
+  main { max-width:900px; margin:0 auto; padding:20px 16px 110px; }
+  h2 { margin:0 0 2px; font-size:26px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  section.block { background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:18px 20px; margin:0 0 18px; }
+  section.block h3 { margin:0 0 12px; font-size:18px; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px 20px; }
+  .cols .wide { grid-column:1/-1; }
+  @media (max-width:700px) { .cols { grid-template-columns:1fr; } }
+
+  label.f { display:block; font-weight:600; margin-bottom:3px; }
+  .hint { color:var(--muted); font-size:14px; margin:4px 0 0; }
+  input[type=text],input[type=password],input[type=number],input[type=date],select,textarea {
+    width:100%; background:var(--field); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:9px 10px; font:inherit; }
+  input:focus,select:focus,textarea:focus,button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  input[type=date] { color-scheme:dark; }
+  textarea { min-height:110px; resize:vertical; }
+
+  button.btn { background:transparent; color:var(--ink); border:1px solid var(--ink); border-radius:4px; padding:8px 16px; font:inherit; cursor:pointer; }
+  button.btn.solid { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; }
+  button.btn:disabled { opacity:.45; cursor:progress; }
+
+  .indent { margin:0 0 14px 28px; }
+  .days { display:flex; gap:8px; flex-wrap:wrap; }
+  .daychip { position:relative; }
+  .daychip input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+  .daychip span { display:block; min-width:56px; text-align:center; padding:7px 10px; border:1px solid var(--line); border-radius:4px; background:var(--field); }
+  .daychip input:checked + span { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  .daychip input:focus-visible + span { outline:2px solid var(--accent); outline-offset:2px; }
+  button.link { background:none; border:0; padding:0 6px 0 0; font:inherit; color:var(--accent); text-decoration:underline; cursor:pointer; }
+  .tick { display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--line); }
+  .tick:first-of-type { border-top:0; padding-top:0; }
+  .tick input { margin-top:5px; width:18px; height:18px; accent-color:var(--accent); flex:none; }
+  .tick b { display:block; font-weight:600; }
+  .tick span { color:var(--muted); font-size:14px; }
+
+  .todo-list { list-style:none; margin:0; padding:0; }
+  .todo-list li { display:flex; gap:12px; padding:9px 0; border-top:1px solid var(--line); }
+  .todo-list li:first-child { border-top:0; padding-top:0; }
+  .todo-list a { color:inherit; text-decoration:none; display:flex; gap:12px; width:100%; }
+  .todo-list .st { flex:none; width:96px; font-size:14px; font-weight:600; }
+  .st.ok { color:var(--ok); } .st.todo { color:var(--warn); }
+  .todo-list small { display:block; color:var(--muted); font-size:14px; }
+
+  .reel { display:flex; gap:22px; flex-wrap:wrap; }
+  .phone { width:240px; aspect-ratio:9/16; background:#000; border:1px solid #4a4660; border-radius:6px; overflow:hidden; display:grid; place-items:center; color:#bbb; text-align:center; padding:14px; font-size:15px; }
+  .phone video { width:100%; height:100%; object-fit:cover; }
+  .phone img { width:100%; height:100%; object-fit:contain; }
+  .reel .info { flex:1; min-width:220px; }
+  .quote { font:italic 20px/1.4 var(--serif); margin:0 0 4px; }
+
+  .note { border-left:4px solid var(--line); padding:8px 12px; margin:0 0 16px; background:var(--paper); display:none; }
+  .note.show { display:block; }
+  .note.err { border-color:var(--bad); } .note.busy { border-color:var(--warn); }
+
+  .past { padding:9px 0; border-top:1px solid var(--line); }
+  .past:first-of-type { border-top:0; padding-top:0; }
+  .past small { color:var(--muted); }
+  details summary { cursor:pointer; }
+  pre { margin:10px 0 0; font:13px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space:pre-wrap; max-height:260px; overflow:auto; }
+
+  .savebar { position:fixed; left:0; right:0; bottom:0; background:var(--bar); border-top:1px solid var(--line); }
+  .savebar .in { max-width:900px; margin:0 auto; padding:10px 16px; display:flex; gap:12px; align-items:center; }
+  .savebar .msg { margin-right:auto; color:var(--muted); font-size:14px; }
+  .savebar .msg.dirty { color:var(--warn); font-weight:600; }
+
+  .js section.tab { display:none; } .js section.tab.active { display:block; }
+  @media (max-width:700px) { .status { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <span class="logo">LarpCron</span>
+    <span class="status"><span id="statusText">Automatic posting is {{ 'on' if cfg.enabled else 'off' }}. Dry run is {{ 'on' if cfg.dry_run else 'off' }}.</span><span id="busyPill" {% if not st.busy %}hidden{% endif %}> Working now.</span></span>
+    <span class="actions">
+      <button class="btn" type="submit" form="settingsform" formaction="/settings?run=preview" id="btnPreview">Preview</button>
+      <button class="btn solid" type="submit" form="settingsform" formaction="/settings?run=post" id="btnPost"
+              data-live="{{ 'no' if cfg.dry_run else 'yes' }}">{{ 'Post now' if not cfg.dry_run else 'Test post' }}</button>
+    </span>
+  </div>
+  <nav id="tabs">
+    <button type="button" data-tab="home">Home</button>
+    <button type="button" data-tab="content">Content</button>
+    <button type="button" data-tab="music">Music</button>
+    <button type="button" data-tab="schedule">Schedule</button>
+    <button type="button" data-tab="accounts">Accounts</button>
+  </nav>
+</header>
+
+<main>
+<form method="post" action="/settings" id="settingsform">
+
+  <!-- Home -->
+  <section class="tab" data-tab="home">
+    <div class="note err" id="errBanner"></div>
+    <div class="note busy" id="busyBanner"></div>
+
+    <section class="block">
+      <h3>Latest preview</h3>
+      <div class="reel">
+        <div class="phone" id="phone">
+          {% if st.latest and st.kind == 'photo' %}<img src="/media/{{ st.latest }}" alt="Latest photo post">
+          {% elif st.latest %}<video src="/media/{{ st.latest }}" {% if st.poster %}poster="/media/{{ st.poster }}"{% endif %} controls playsinline loop preload="metadata"></video>
+          {% else %}No reel yet.<br>Press Preview to make one.{% endif %}
+        </div>
+        <div class="info">
+          <p class="quote" id="pvQuote">{{ ('“' ~ st.quote ~ '”') if st.quote else '' }}</p>
+          <p class="hint" id="pvMeta">{% if st.author %}by {{ st.author }}, from {{ st.source }}{% endif %}</p>
+          <p class="hint" id="nextRuns">{% if st.next_runs %}Next post: {{ st.next_runs|join(', ') }}{% else %}No posts are scheduled.{% endif %}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Setup</h3>
+      <ul class="todo-list" id="setupList">
+        {% for c in checks %}
+        <li><a href="#{{ c.tab }}" data-goto="{{ c.tab }}">
+          <span class="st {{ 'ok' if c.ok else 'todo' }}">{{ 'Ready' if c.ok else 'Needs a look' }}</span>
+          <span>{{ c.title }}<small>{{ c.detail }}</small></span></a></li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="block">
+      <h3>Recent reels</h3>
+      <div id="recentList">
+      {% for h in hist %}
+        <div class="past">{{ h.quote }} <small>by {{ h.author }}.
+          {{ 'Posted' if h.posted else 'Preview only' }}, {{ h.time }}.
+          {% if h.code %}<a href="https://www.instagram.com/p/{{ h.code }}/" target="_blank" rel="noopener">Open on Instagram</a>{% endif %}</small></div>
+      {% else %}<p class="hint" style="margin:0">Nothing yet.</p>{% endfor %}
+      </div>
+    </section>
+
+    <section class="block"><details><summary>Activity log</summary><pre id="log">{{ st.log|join('\n') or 'Nothing has run yet.' }}</pre></details></section>
+  </section>
+
+  <!-- Content -->
+  <section class="tab" data-tab="content">
+    <h2>Content</h2><p class="sub">What the reels look like and what they say.</p>
+
+    <section class="block">
+      <h3>Background footage</h3>
+      <div class="cols">
+        <div>
+          <label class="f" for="footage_source">Where footage comes from</label>
+          <select name="footage_source" id="footage_source">
+            {% for v,l in [('any','Auto (use whatever is set up)'),('online','Pexels and Pixabay'),('pexels','Pexels only'),('pixabay','Pixabay only'),('tiktok','A TikTok creator'),('local','My own clips only')] %}
+            <option value="{{ v }}" {{ 'selected' if cfg.footage_source==v }}>{{ l }}</option>{% endfor %}
+          </select>
+          <p class="hint" id="srcHint"></p>
+        </div>
+        <div>
+          <label class="f" for="content_mode">Post type</label>
+          <select name="content_mode" id="content_mode">
+            {% for v,l in [('reel','Reels (video)'),('photo','Photo posts'),('mix','A mix of both')] %}
+            <option value="{{ v }}" {{ 'selected' if cfg.content_mode==v }}>{{ l }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="wide">
+          <label class="f" for="themes">Search themes</label>
+          <textarea name="themes" id="themes">{{ cfg.themes|join('\n') }}</textarea>
+          <p class="hint">One per line, used as search words on Pexels and Pixabay. Try <code>miami skyline</code> or <code>rolex</code>.</p>
+        </div>
+        <div class="wide">
+          <label class="f" for="tiktok_profile">TikTok creator profile</label>
+          <input type="text" name="tiktok_profile" id="tiktok_profile" value="{{ cfg.tiktok_profile }}">
+          <p class="hint">Used by the TikTok creator and Auto sources. Only use creators who let people reuse their clips.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Quote and caption</h3>
+      <div class="cols">
+        <div>
+          <label class="f" for="quote_source">Quotes come from</label>
+          <select name="quote_source" id="quote_source">
+            {% for v,l in [('mixed','The built-in list and ZenQuotes'),('local','The built-in list only'),('online','ZenQuotes only')] %}
+            <option value="{{ v }}" {{ 'selected' if cfg.quote_source==v }}>{{ l }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="f" for="watermark">Watermark</label>
+          <input type="text" name="watermark" id="watermark" value="{{ cfg.watermark }}" placeholder="@yourhandle">
+          <p class="hint">Shown near the bottom of the video.</p>
+        </div>
+        <div class="wide">
+          <label class="f" for="hashtags">Hashtags</label>
+          <input type="text" name="hashtags" id="hashtags" value="{{ cfg.hashtags }}">
+        </div>
+        <div class="wide">
+          <label class="f" for="caption_template">Caption</label>
+          <textarea name="caption_template" id="caption_template" style="min-height:90px">{{ cfg.caption_template }}</textarea>
+          <p class="hint">You can use <code>{quote}</code>, <code>{author}</code> and <code>{hashtags}</code>.</p>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <!-- Music -->
+  <section class="tab" data-tab="music">
+    <h2>Music</h2><p class="sub">Optional. Without it the reels are silent.</p>
+
+    <section class="block">
+      <h3>Where each song starts</h3>
+      <label class="tick"><input type="checkbox" name="smart_music_start" {{ 'checked' if cfg.smart_music_start }}>
+        <div><b>Start songs at their best part</b><span>Skips the intro, using the "Most replayed" graph for YouTube links or the loudest part of the audio. A start time you type always wins.</span></div></label>
+    </section>
+
+    <section class="block">
+      <h3>YouTube links</h3>
+      <label class="f" for="music_links">One link per line, with an optional start time after it</label>
+      <textarea name="music_links" id="music_links" placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX 1:12">{{ cfg.music_links|join('\n') }}</textarea>
+      <p class="hint">Each reel picks one at random. Add a start time after a link, like <code>1:12</code>. Spotify links don't work.</p>
+    </section>
+
+    <section class="block" style="border-color:var(--warn)">
+      <h3>Rights</h3>
+      <p style="margin:0">Make sure you have the rights to every track you add. Instagram often mutes or flags commercial songs, and downloading from YouTube may break YouTube's terms. Royalty-free music (YouTube Audio Library, NCS, Pixabay Music) avoids the muting, though the YouTube terms issue still applies.</p>
+    </section>
+  </section>
+
+  <!-- Schedule -->
+  <section class="tab" data-tab="schedule">
+    <h2>Schedule</h2><p class="sub">When LarpCron posts, and whether it posts for real.</p>
+
+    <section class="block">
+      <h3>Switches</h3>
+      <label class="tick"><input type="checkbox" name="enabled" {{ 'checked' if cfg.enabled }}>
+        <div><b>Post automatically</b><span>Runs at the times below, on the days you pick.</span></div></label>
+      <label class="tick"><input type="checkbox" name="dry_run" {{ 'checked' if cfg.dry_run }}>
+        <div><b>Dry run</b><span>Makes reels but never posts them.</span></div></label>
+    </section>
+
+    <section class="block">
+      <h3>Which days</h3>
+      <input type="hidden" name="days_form" value="1">
+      <label class="tick"><input type="radio" name="schedule_mode" value="weekdays" {{ 'checked' if cfg.schedule_mode != 'interval' }}>
+        <div><b>Certain days of the week</b><span>Tick the days it should post on.</span></div></label>
+      <div id="dayBox" class="indent">
+        <div class="days">
+          {% for i, n in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}
+          <label class="daychip"><input type="checkbox" name="post_days" value="{{ i }}" {{ 'checked' if i in cfg.post_days }}><span>{{ n }}</span></label>{% endfor %}
+        </div>
+        <p class="hint">Quick picks:
+          <button type="button" class="link" data-days="0,1,2,3,4,5,6">every day</button>
+          <button type="button" class="link" data-days="0,1,2,3,4">weekdays</button>
+          <button type="button" class="link" data-days="5,6">weekends</button>
+          <button type="button" class="link" data-days="0,2,4">Mon, Wed, Fri</button>
+          <button type="button" class="link" data-days="1,3">Tue, Thu</button></p>
+      </div>
+      <label class="tick"><input type="radio" name="schedule_mode" value="interval" {{ 'checked' if cfg.schedule_mode == 'interval' }}>
+        <div><b>Every few days</b><span>For example every 2 days, counted from a start date.</span></div></label>
+      <div id="everyBox" class="indent cols">
+        <div><label class="f" for="every_n_days">Every how many days</label>
+          <input type="number" name="every_n_days" id="every_n_days" min="1" max="30" value="{{ cfg.every_n_days }}"></div>
+        <div><label class="f" for="interval_anchor">Counting from</label>
+          <input type="date" name="interval_anchor" id="interval_anchor" value="{{ cfg.interval_anchor }}">
+          <p class="hint">Leave it empty to start today.</p></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Times</h3>
+      <div class="cols">
+        <div>
+          <label class="f" for="post_times">Post times</label>
+          <input type="text" name="post_times" id="post_times" value="{{ cfg.post_times|join(', ') }}" placeholder="09:00, 18:30">
+          <p class="hint">24-hour clock, separated by commas.</p>
+        </div>
+        <div>
+          <label class="f" for="timezone">Timezone</label>
+          <input type="text" name="timezone" id="timezone" value="{{ cfg.timezone }}" list="tzlist" autocomplete="off">
+          <datalist id="tzlist">{% for z in timezones %}<option value="{{ z }}">{% endfor %}</datalist>
+          <p class="hint">For example <code>America/New_York</code>.</p>
+        </div>
+        <div>
+          <label class="f" for="reel_seconds">Reel length in seconds</label>
+          <input type="number" name="reel_seconds" id="reel_seconds" min="5" max="60" value="{{ cfg.reel_seconds }}">
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Make it less regular</h3>
+      <div class="cols">
+        <div><label class="f" for="time_jitter_min">Shift each post by up to this many minutes</label>
+          <input type="number" name="time_jitter_min" id="time_jitter_min" min="0" max="120" value="{{ cfg.time_jitter_min }}">
+          <p class="hint">Each post lands a random amount earlier or later, so it isn't the same minute every day. 0 keeps the exact times.</p></div>
+        <div><label class="f" for="post_chance">Chance that each post goes out (%)</label>
+          <input type="number" name="post_chance" id="post_chance" min="1" max="100" value="{{ cfg.post_chance }}">
+          <p class="hint">Below 100, some slots are skipped at random.</p></div>
+        <div class="wide"><label class="f" for="pause_until">Pause until</label>
+          <input type="date" name="pause_until" id="pause_until" value="{{ cfg.pause_until }}" style="max-width:220px">
+          <p class="hint">Nothing posts through this date. Clear it to start again.</p></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Coming up</h3>
+      <div id="upcomingList">
+        <p class="hint" style="margin:0 0 8px">{{ summary }}</p>
+        {% for u in upcoming %}<div class="past">{{ u }}</div>{% else %}<p class="hint" style="margin:0">Nothing is coming up with these settings.</p>{% endfor %}
+        <p class="hint" style="margin:8px 0 0">Based on your saved settings. Random shifts and skipped posts are decided at the time.</p>
+      </div>
+    </section>
+  </section>
+
+  <!-- Accounts -->
+  <section class="tab" data-tab="accounts">
+    <h2>Accounts and keys</h2><p class="sub">Saved on this device only.</p>
+
+    <section class="block">
+      <h3>Instagram</h3>
+      <div class="cols">
+        <div><label class="f" for="instagram_username">Username</label>
+          <input type="text" name="instagram_username" id="instagram_username" value="{{ cfg.instagram_username }}" autocomplete="off"></div>
+        <div><label class="f" for="instagram_password">Password{% if cfg.instagram_password %} (saved){% endif %}</label>
+          <input type="password" name="instagram_password" id="instagram_password" autocomplete="new-password"></div>
+        <div class="wide"><label class="f" for="instagram_2fa_seed">Authenticator secret, if you use 2FA{% if cfg.instagram_2fa_seed %} (saved){% endif %}</label>
+          <input type="password" name="instagram_2fa_seed" id="instagram_2fa_seed" autocomplete="new-password">
+          <p class="hint">Posting goes through Instagram's unofficial API. That breaks Instagram's terms and can get the account restricted, so use one you can afford to lose.</p></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>Footage keys</h3>
+      <div class="cols">
+        <div><label class="f" for="pexels_api_key">Pexels key</label>
+          <input type="text" name="pexels_api_key" id="pexels_api_key" value="{{ cfg.pexels_api_key }}" autocomplete="off">
+          <p class="hint"><a href="https://www.pexels.com/api/" target="_blank" rel="noopener">Get a free key</a></p></div>
+        <div><label class="f" for="pixabay_api_key">Pixabay key</label>
+          <input type="text" name="pixabay_api_key" id="pixabay_api_key" value="{{ cfg.pixabay_api_key }}" autocomplete="off">
+          <p class="hint"><a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a free key</a></p></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h3>This panel</h3>
+      <label class="f" for="ui_password">New password</label>
+      <input type="password" name="ui_password" id="ui_password" autocomplete="new-password" placeholder="Leave empty to keep the current one">
+      <p class="hint">The username is <code>admin</code>. The password starts as <code>larp</code>, so change it.</p>
+    </section>
+  </section>
+
+  <div class="savebar"><div class="in">
+    <span class="msg" id="saveMsg">No unsaved changes.</span>
+    <button class="btn solid" type="submit" id="btnSave">Save settings</button>
+  </div></div>
+</form>
+</main>
+
+<script>
+document.documentElement.classList.add('js');
+(function () {
+  var TABS = ['home', 'content', 'music', 'schedule', 'accounts'];
+  var form = document.getElementById('settingsform');
+  var dirty = false;
+
+  function store(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+
+  function show(name) {
+    if (TABS.indexOf(name) < 0) name = 'home';
+    document.querySelectorAll('section.tab').forEach(function (s) { s.classList.toggle('active', s.dataset.tab === name); });
+    document.querySelectorAll('#tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+    store('tab', name);
+    history.replaceState(null, '', '#' + name);
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('#tabs button').forEach(function (b) { b.onclick = function () { show(b.dataset.tab); }; });
+  document.querySelectorAll('[data-goto]').forEach(function (a) { a.onclick = function (e) { e.preventDefault(); show(a.dataset.goto); }; });
+  show((location.hash || '').slice(1) || load('tab') || 'home');
+
+  var msg = document.getElementById('saveMsg');
+  function markDirty() { dirty = true; msg.textContent = 'You have unsaved changes.'; msg.className = 'msg dirty'; }
+  form.addEventListener('input', markDirty);
+
+  // Schedule tab: show only the block for the chosen mode, and quick day picks
+  function modeBlocks() {
+    var m = form.querySelector('input[name=schedule_mode]:checked');
+    var every = !!m && m.value === 'interval';
+    document.getElementById('dayBox').hidden = every;
+    document.getElementById('everyBox').hidden = !every;
+  }
+  form.querySelectorAll('input[name=schedule_mode]').forEach(function (r) { r.addEventListener('change', modeBlocks); });
+  modeBlocks();
+  document.querySelectorAll('[data-days]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var set = b.dataset.days.split(',');
+      form.querySelectorAll('input[name=post_days]').forEach(function (c) { c.checked = set.indexOf(c.value) >= 0; });
+      markDirty();
+    });
+  });
+  form.addEventListener('submit', function () { dirty = false; });
+  window.addEventListener('beforeunload', function (e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+  var HINTS = {
+    any: 'Uses every source you have set up: keys, the TikTok profile, and any clips in assets/backgrounds.',
+    online: 'Searches Pexels and Pixabay with your themes. Needs at least one free key (Accounts tab).',
+    pexels: 'Pexels stock video. Needs a free key (Accounts tab). Mostly vertical clips, which suit reels best.',
+    pixabay: 'Pixabay stock video. Needs a free key (Accounts tab). Mostly landscape, so it gets cropped to vertical.',
+    tiktok: 'A random clip from the TikTok profile below, with the audio removed. No key needed.',
+    local: 'Only the video files you put in assets/backgrounds on this device.'
+  };
+  var src = document.getElementById('footage_source'), hint = document.getElementById('srcHint');
+  function srcHint() { hint.textContent = HINTS[src.value] || ''; }
+  src.addEventListener('change', srcHint); srcHint();
+
+  // Live run status. The page never reloads, so unsaved edits are safe.
+  var pill = document.getElementById('busyPill'), errB = document.getElementById('errBanner'), busyB = document.getElementById('busyBanner');
+  var btns = [document.getElementById('btnPreview'), document.getElementById('btnPost')];
+  var lastLatest = {{ (st.latest or '')|tojson }};
+  var timer = null, watching = false;
+
+  function render(s) {
+    pill.hidden = !s.busy;
+    btns.forEach(function (b) { b.disabled = s.busy; });
+    busyB.classList.toggle('show', s.busy);
+    busyB.textContent = s.busy ? 'Working: ' + ((s.log[0] || '').replace(/^\S+ \S+\s+/, '') || 'starting') : '';
+    errB.classList.toggle('show', !!s.error && !s.busy);
+    errB.textContent = s.error ? 'The last run failed. ' + s.error : '';
+    document.getElementById('log').textContent = s.log.join('\n') || 'Nothing has run yet.';
+    if (s.quote) {
+      document.getElementById('pvQuote').textContent = '“' + s.quote + '”';
+      document.getElementById('pvMeta').textContent = 'by ' + s.author + ', from ' + s.source;
+    }
+    document.getElementById('nextRuns').textContent = s.next_runs.length ? 'Next post: ' + s.next_runs.join(', ') : 'No posts are scheduled.';
+    if (!s.busy && s.latest && s.latest !== lastLatest) {  // never swap in a file mid-render
+      lastLatest = s.latest;
+      var ph = document.getElementById('phone');
+      ph.innerHTML = '';
+      if (s.kind === 'photo') {
+        var img = document.createElement('img');
+        img.src = '/media/' + s.latest; img.alt = 'Latest photo post';
+        ph.appendChild(img);
+        return s.busy;
+      }
+      var v = document.createElement('video');
+      if (s.poster) v.poster = '/media/' + s.poster;
+      v.controls = true; v.playsInline = true; v.loop = true;
+      v.src = '/media/' + s.latest;
+      ph.appendChild(v);
+      var p = v.play();                            // allowed with sound because the Preview click counts as interaction
+      if (p && p.catch) p.catch(function () { v.muted = true; v.play().catch(function () {}); });
+    }
+    return s.busy;
+  }
+  function poll() {
+    fetch('/status', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (s) {
+      var busy = render(s);
+      if (!busy) { clearInterval(timer); timer = null; if (watching) { watching = false; refreshChrome(); } }
+    }).catch(function () {});
+  }
+  function start() { if (!timer) { poll(); timer = setInterval(poll, 2000); } }
+
+  // Pull fresh header status, setup list and recent list from the server without reloading the page.
+  function refreshChrome() {
+    return fetch('/', { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
+      var d = new DOMParser().parseFromString(html, 'text/html');
+      ['statusText', 'setupList', 'recentList', 'upcomingList'].forEach(function (id) {
+        var a = document.getElementById(id), b = d.getElementById(id);
+        if (a && b) a.innerHTML = b.innerHTML;
+      });
+      var np = d.getElementById('btnPost');
+      if (np) { btns[1].textContent = np.textContent.trim(); btns[1].dataset.live = np.dataset.live; }
+    }).catch(function () {});
+  }
+
+  // Preview and Post save the form and start the run without reloading, so the click still counts
+  // as interaction and the finished reel is allowed to play with sound.
+  function runHere(kind) {
+    if (kind === 'post' && btns[1].dataset.live === 'yes' &&
+        !confirm('Save your settings, make a reel and post it to Instagram now?')) return;
+    btns.forEach(function (b) { b.disabled = true; });
+    fetch('/settings?run=' + kind, { method: 'POST', body: new FormData(form), credentials: 'same-origin', redirect: 'manual' })
+      .then(function () {
+        dirty = false; msg.textContent = 'No unsaved changes.'; msg.className = 'msg';
+        watching = true; refreshChrome(); start();
+      })
+      .catch(function () {
+        btns.forEach(function (b) { b.disabled = false; });
+        errB.textContent = 'Could not reach the server.'; errB.classList.add('show');
+      });
+  }
+  btns[0].addEventListener('click', function (e) { e.preventDefault(); runHere('preview'); });
+  btns[1].addEventListener('click', function (e) { e.preventDefault(); runHere('post'); });
+  {% if st.busy %}start();{% endif %}
+  if (!timer) poll();
+})();
+</script>
+</body>
+</html>

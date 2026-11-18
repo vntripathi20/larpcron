@@ -1,0 +1,14 @@
+[Unit]
+Description=LarpCron
+After=network-online.target
+
+[Service]
+# Adjust User and paths if you cloned somewhere other than /home/pi/LarpCron
+User=pi
+WorkingDirectory=/home/pi/LarpCron
+ExecStart=/home/pi/LarpCron/.venv/bin/python -m larpcron --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
