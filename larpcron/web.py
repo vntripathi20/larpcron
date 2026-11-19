@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-from . import config, job, media, music, scheduler, updates
+from . import config, job, media, music, platforms, scheduler, updates
+from .platforms import base as platform_base, cookies as cookie_store, status as platform_status
 
 app = Flask(__name__)
 
@@ -54,6 +55,20 @@ def _readiness(cfg: dict) -> list[dict]:
     ]
 
 
+def _platform_info(cfg: dict) -> list[dict]:
+    """What the Platforms tab shows for TikTok and YouTube. Never includes cookie contents."""
+    saved = platform_status.all_status()
+    out = []
+    for p in platforms.all_platforms():
+        if not p.browser:
+            continue
+        entry = saved.get(p.key, {})
+        out.append({"key": p.key, "name": p.name, "enabled": p.enabled(cfg), "has_cookies": cookie_store.exists(p.key),
+                    "ok": entry.get("ok"), "error": entry.get("error"), "last": entry.get("last"),
+                    "warning": p.test_warning})
+    return out
+
+
 def _status() -> dict:
     outs = sorted([*config.OUT.glob("*-reel.mp4"), *config.OUT.glob("*-post.jpg")],
                   key=lambda p: p.stat().st_mtime, reverse=True)
@@ -76,7 +91,7 @@ def index():
         "index.html", cfg=cfg, st=_status(), hist=job.history()[::-1][:8],
         checks=_readiness(cfg), timezones=sorted(zoneinfo.available_timezones()),
         upcoming=[scheduler.format_slot(d) for d in scheduler.upcoming(cfg, 6)], summary=scheduler.describe(cfg),
-        up=updates.info(),
+        up=updates.info(), pf=_platform_info(cfg), chromium=platform_base.browser_installed(),
     )
 
 
@@ -102,6 +117,11 @@ def settings():
     cfg["smart_music_start"] = "smart_music_start" in f
     cfg["auto_update"] = "auto_update" in f
     cfg["auto_update_deps"] = "auto_update_deps" in f
+    cfg["tiktok_enabled"] = "tiktok_enabled" in f
+    cfg["youtube_enabled"] = "youtube_enabled" in f
+    cfg["tiktok_caption_template"] = f.get("tiktok_caption_template", "").strip()
+    cfg["youtube_title_template"] = f.get("youtube_title_template", "").strip() or "{quote}"
+    cfg["youtube_visibility"] = f.get("youtube_visibility") if f.get("youtube_visibility") in ("public", "unlisted", "private") else "public"
     override = {
         "app_version": re.sub(r"[^0-9.]", "", f.get("ig_app_version", ""))[:40],
         "version_code": re.sub(r"\D", "", f.get("ig_version_code", ""))[:20],
@@ -166,6 +186,34 @@ def update_status():
 @app.post("/update/run")
 def update_run():
     started, message = updates.request_update()
+    return jsonify({"ok": started, "message": message}), (200 if started else 409)
+
+
+@app.post("/platforms/<key>/cookies")
+def platform_cookies(key):
+    p = platforms.get(key)
+    if p is None or not p.browser:
+        abort(404)
+    try:
+        count = cookie_store.save(key, request.form.get("cookies", ""), p.cookie_domains, p.cookie_names)
+    except ValueError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+    job.log(f"{p.name}: cookies saved ({count}).")  # the count only, never the cookies
+    return jsonify({"ok": True, "message": f"Saved {count} cookies. They're not shown again."})
+
+
+@app.post("/platforms/<key>/cookies/remove")
+def platform_cookies_remove(key):
+    p = platforms.get(key)
+    if p is None or not p.browser:
+        abort(404)
+    cookie_store.path_for(key).unlink(missing_ok=True)
+    return jsonify({"ok": True, "message": "Cookies removed."})
+
+
+@app.post("/platforms/<key>/test")
+def platform_test(key):
+    started, message = job.start_test_upload(key)
     return jsonify({"ok": started, "message": message}), (200 if started else 409)
 
 

@@ -136,6 +136,8 @@ class YouTube(Platform):
     kinds = ("reel",)
     browser = True
     can_test = True
+    cookie_domains = DOMAINS
+    cookie_names = LOGIN_COOKIES
 
     def enabled(self, cfg: dict) -> bool:
         return bool(cfg.get("youtube_enabled"))

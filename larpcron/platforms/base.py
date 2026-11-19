@@ -24,6 +24,9 @@ class Platform:
     kinds = ("reel",)    # what it can post: "reel" (video) and/or "photo"
     browser = False      # needs Playwright's Chromium (see deploy/install-browser.sh)
     can_test = False     # has a private "Test upload"
+    cookie_domains = ()  # cookies for these sites are kept from a pasted export
+    cookie_names = ()    # at least one of these must be in it, or it isn't a logged-in session
+    test_warning = ""    # shown before a Test upload when the platform can't promise it stays private
 
     def enabled(self, cfg: dict) -> bool:
         raise NotImplementedError
@@ -71,6 +74,25 @@ def probe_video(path: Path) -> tuple[int, int, float]:
         raise PlatformError(f"Couldn't read the video {path.name}.")
     seconds = int(dur.group(1)) * 3600 + int(dur.group(2)) * 60 + float(dur.group(3))
     return int(size.group(1)), int(size.group(2)), seconds
+
+
+def browser_installed() -> bool:
+    """True when Playwright's Chromium has been downloaded (deploy/install-browser.sh). Doesn't start anything."""
+    import os
+    import sys
+
+    root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if root == "0":
+        return False  # browsers live inside the package, which we don't go digging in
+    if root:
+        base = Path(root)
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        base = Path.home() / ".cache" / "ms-playwright"
+    return any(base.glob("chromium-*")) if base.is_dir() else False
 
 
 DEBUG_DIR = None  # set lazily, so tests can point it somewhere else

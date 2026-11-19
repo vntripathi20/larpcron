@@ -43,6 +43,7 @@
 
   label.f { display:block; font-weight:600; margin-bottom:3px; }
   .hint { color:var(--muted); font-size:14px; margin:4px 0 0; }
+  textarea.secret { -webkit-text-security:disc; }
   input[type=text],input[type=password],input[type=number],input[type=date],select,textarea {
     width:100%; background:var(--field); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:9px 10px; font:inherit; }
   input:focus,select:focus,textarea:focus,button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
@@ -117,6 +118,7 @@
     <button type="button" data-tab="content">Content</button>
     <button type="button" data-tab="music">Music</button>
     <button type="button" data-tab="schedule">Schedule</button>
+    <button type="button" data-tab="platforms">Platforms</button>
     <button type="button" data-tab="accounts">Accounts</button>
     <button type="button" data-tab="updates">Updates</button>
   </nav>
@@ -343,6 +345,64 @@
     </section>
   </section>
 
+  <!-- Platforms -->
+  <section class="tab" data-tab="platforms">
+    <h2>Platforms</h2><p class="sub">Post the same reel to TikTok and YouTube Shorts as well as Instagram.</p>
+
+    <section class="block">
+      <p style="margin:0">These two post through a browser that is logged in to your account, with cookies you export yourself. There's no official API behind it. That's against both sites' rules, and accounts that get posted to by automation can be flagged or banned, so use a throwaway account. Reels only: photo posts still go to Instagram alone. With Dry run on, nothing is uploaded anywhere.</p>
+      {% if not chromium %}<p class="hint" style="margin:10px 0 0">The browser these need isn't installed on this machine yet. Run <code>bash deploy/install-browser.sh</code> once, and expect each upload to take a few minutes on a Pi 3.</p>{% endif %}
+    </section>
+
+    {% macro pfcommon(p) %}
+      <div style="margin-top:14px">
+        <label class="f" for="pf_cookies_{{ p.key }}">Cookie export <span id="pfHave_{{ p.key }}">({{ 'saved' if p.has_cookies else 'none yet' }})</span></label>
+        <textarea id="pf_cookies_{{ p.key }}" class="secret" autocomplete="off" spellcheck="false" placeholder="Paste a cookies.txt or JSON export here. It's saved on this device and never shown again."></textarea>
+        <p style="margin:8px 0 0">
+          <button type="button" class="btn" data-pf-save="{{ p.key }}">Save cookies</button>
+          <button type="button" class="btn" data-pf-remove="{{ p.key }}">Remove cookies</button>
+          <span class="hint" id="pfMsg_{{ p.key }}"></span></p>
+      </div>
+      <p style="margin:14px 0 0">
+        <button type="button" class="btn pfTest" data-pf-test="{{ p.key }}" data-pf-name="{{ p.name }}" data-pf-warning="{{ p.warning }}" {{ 'disabled' if st.busy }}>Test upload</button>
+        <span class="hint">Uploads your latest reel as private. Make one with Preview first.</span></p>
+      <div id="pfStatus_{{ p.key }}" style="margin-top:10px">
+        {% if p.ok %}<p class="hint" style="margin:0">Last success: {{ p.ok.time }}. {{ p.ok.text }}</p>{% endif %}
+        {% if p.error %}<p class="hint" style="margin:4px 0 0">Last error: {{ p.error.time }}. {{ p.error.text }}</p>{% endif %}
+        {% if not p.ok and not p.error %}<p class="hint" style="margin:0">Nothing posted yet.</p>{% endif %}
+      </div>
+    {% endmacro %}
+
+    {% for p in pf %}
+    <section class="block">
+      <h3>{{ p.name }}</h3>
+      <label class="tick"><input type="checkbox" name="{{ p.key }}_enabled" {{ 'checked' if p.enabled }}>
+        <div><b>Post reels to {{ p.name }}</b><span>{% if p.key == 'tiktok' %}Uploads through tiktok.com in a hidden browser, after Instagram.{% else %}Uploads through YouTube Studio in a hidden browser, as a Short with #Shorts added, not made for kids.{% endif %}</span></div></label>
+      {% if p.key == 'tiktok' %}
+      <label class="f" for="tiktok_caption_template" style="margin-top:12px">Caption</label>
+      <input type="text" name="tiktok_caption_template" id="tiktok_caption_template" value="{{ cfg.tiktok_caption_template }}" placeholder="Leave empty to reuse the main caption" autocomplete="off">
+      <p class="hint">TikTok cuts captions at 150 characters, so long ones are trimmed at a word.</p>
+      {% else %}
+      <div class="cols" style="margin-top:12px">
+        <div><label class="f" for="youtube_title_template">Title</label>
+          <input type="text" name="youtube_title_template" id="youtube_title_template" value="{{ cfg.youtube_title_template }}" autocomplete="off">
+          <p class="hint">You can use {quote}, {author} and {hashtags}. Titles are cut to 100 characters.</p></div>
+        <div><label class="f" for="youtube_visibility">Who can see it</label>
+          <select name="youtube_visibility" id="youtube_visibility">
+            {% for v in ['public', 'unlisted', 'private'] %}<option value="{{ v }}" {{ 'selected' if cfg.youtube_visibility == v }}>{{ v|capitalize }}</option>{% endfor %}
+          </select>
+          <p class="hint">Shorts have to be vertical and under 60 seconds.</p></div>
+      </div>
+      {% endif %}
+      {{ pfcommon(p) }}
+    </section>
+    {% endfor %}
+
+    <section class="block"><details><summary>How to export cookies</summary>
+      <p class="hint" style="margin-top:10px">Log in to the site in a desktop browser, then use a cookie export extension (Get cookies.txt LOCALLY and Cookie-Editor both work) on that site and copy the result. Paste it above. Only the cookies for that site are kept. They expire eventually, and the panel says so when they do.</p>
+    </details></section>
+  </section>
+
   <!-- Accounts -->
   <section class="tab" data-tab="accounts">
     <h2>Accounts and keys</h2><p class="sub">Saved on this device only.</p>
@@ -441,7 +501,7 @@
 <script>
 document.documentElement.classList.add('js');
 (function () {
-  var TABS = ['home', 'content', 'music', 'schedule', 'accounts', 'updates'];
+  var TABS = ['home', 'content', 'music', 'schedule', 'platforms', 'accounts', 'updates'];
   var form = document.getElementById('settingsform');
   var dirty = false;
 
@@ -504,6 +564,7 @@ document.documentElement.classList.add('js');
   function render(s) {
     pill.hidden = !s.busy;
     btns.forEach(function (b) { b.disabled = s.busy; });
+    document.querySelectorAll('.pfTest').forEach(function (b) { b.disabled = s.busy; });
     busyB.classList.toggle('show', s.busy);
     busyB.textContent = s.busy ? 'Working: ' + ((s.log[0] || '').replace(/^\S+ \S+\s+/, '') || 'starting') : '';
     errB.classList.toggle('show', !!s.error && !s.busy);
@@ -546,7 +607,7 @@ document.documentElement.classList.add('js');
   function refreshChrome() {
     return fetch('/', { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
       var d = new DOMParser().parseFromString(html, 'text/html');
-      ['statusText', 'setupList', 'recentList', 'upcomingList'].forEach(function (id) {
+      ['statusText', 'setupList', 'recentList', 'upcomingList', 'pfStatus_tiktok', 'pfStatus_youtube'].forEach(function (id) {
         var a = document.getElementById(id), b = d.getElementById(id);
         if (a && b) a.innerHTML = b.innerHTML;
       });
@@ -573,6 +634,42 @@ document.documentElement.classList.add('js');
   }
   btns[0].addEventListener('click', function (e) { e.preventDefault(); runHere('preview'); });
   btns[1].addEventListener('click', function (e) { e.preventDefault(); runHere('post'); });
+  // Platforms tab: save or remove cookies, and the private test upload.
+  function pfPost(url, body) {
+    return fetch(url, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (r) {
+      return r.json().then(function (d) { d.ok = d.ok && r.ok; return d; });
+    });
+  }
+  document.querySelectorAll('[data-pf-save]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var key = b.dataset.pfSave, box = document.getElementById('pf_cookies_' + key), out = document.getElementById('pfMsg_' + key);
+      var fd = new FormData(); fd.append('cookies', box.value);
+      pfPost('/platforms/' + key + '/cookies', fd).then(function (d) {
+        out.textContent = d.message;
+        if (d.ok) { box.value = ''; document.getElementById('pfHave_' + key).textContent = '(saved)'; }
+      }).catch(function () { out.textContent = 'Could not reach the server.'; });
+    });
+  });
+  document.querySelectorAll('[data-pf-remove]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var key = b.dataset.pfRemove, out = document.getElementById('pfMsg_' + key);
+      pfPost('/platforms/' + key + '/cookies/remove', new FormData()).then(function (d) {
+        out.textContent = d.message; document.getElementById('pfHave_' + key).textContent = '(none yet)';
+      }).catch(function () { out.textContent = 'Could not reach the server.'; });
+    });
+  });
+  document.querySelectorAll('[data-pf-test]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var key = b.dataset.pfTest, out = document.getElementById('pfMsg_' + key);
+      var ask = 'Upload your latest reel to ' + b.dataset.pfName + ' as private? Dry run does not apply to test uploads.';
+      if (b.dataset.pfWarning) ask += '\n\n' + b.dataset.pfWarning;
+      if (!confirm(ask)) return;
+      pfPost('/platforms/' + key + '/test', new FormData()).then(function (d) {
+        out.textContent = d.message;
+        if (d.ok) { watching = true; start(); }
+      }).catch(function () { out.textContent = 'Could not reach the server.'; });
+    });
+  });
   // Updates tab: "Update now" starts the update unit, then we watch for the result. The panel restarts
   // itself during a real update, so failed polls are expected for a few seconds.
   var btnUpdate = document.getElementById('btnUpdate'), updMsg = document.getElementById('updMsg');

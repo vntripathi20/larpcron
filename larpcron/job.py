@@ -153,6 +153,55 @@ def run_once(post: bool) -> dict | None:
         _run_lock.release()
 
 
+def _latest_reel():
+    reels = sorted(config.OUT.glob("*-reel.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return reels[0] if reels else None
+
+
+def start_test_upload(key: str) -> tuple[bool, str]:
+    """Upload the newest reel to one platform as private, in the background. Returns (started, message)."""
+    p = platforms.get(key)
+    if p is None or not p.can_test:
+        return False, "That platform has no test upload."
+    if STATE["busy"] or _run_lock.locked():
+        return False, "A reel is being made right now. Try again in a minute."
+    if update_in_progress():
+        return False, "An update is being installed. Try again in a minute."
+    if _latest_reel() is None:
+        return False, "There's no reel to upload yet. Press Preview on the Home tab first."
+    STATE["busy"] = True
+    threading.Thread(target=_test_upload, args=(p,), daemon=True).start()
+    return True, f"Uploading the latest reel to {p.name} as private. This can take a few minutes."
+
+
+def _test_upload(p) -> None:
+    if not _run_lock.acquire(blocking=False):
+        STATE["busy"] = False
+        return
+    wrote = False
+    try:
+        config.ensure_dirs()
+        _write_run_file()
+        wrote = True
+        reel_file = _latest_reel()
+        cfg = config.load()
+        log(f"{p.name}: test upload of {reel_file.name} (private)...")
+        caption = p.make_caption(cfg, "Test upload", "LarpCron", "LarpCron test upload. Safe to delete.")
+        try:
+            ref = p.post(reel_file, caption, cfg, private=True)
+        except Exception as e:  # noqa: BLE001
+            log(f"{p.name}: ERROR {e}")
+            platform_status.record(p.key, False, f"Test upload failed: {e}")
+        else:
+            log(f"{p.name}: test uploaded privately" + (f" {p.link(ref)}" if ref else ""))
+            platform_status.record(p.key, True, "Test upload: " + (p.link(ref) if ref else "done"))
+    finally:
+        if wrote:
+            _remove_run_file()
+        STATE["busy"] = False
+        _run_lock.release()
+
+
 def run_async(post: bool) -> None:
     STATE["busy"] = True  # visible immediately, before the worker thread gets the lock
     threading.Thread(target=run_once, args=(post,), daemon=True).start()

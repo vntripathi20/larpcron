@@ -98,6 +98,10 @@ class TikTok(Platform):
     kinds = ("reel",)
     browser = True
     can_test = True
+    cookie_domains = DOMAINS
+    cookie_names = LOGIN_COOKIES
+    test_warning = ("TikTok's page is automated and the Only you setting can't be double checked. "
+                    "If TikTok has changed its page, the test could end up public.")
 
     def enabled(self, cfg: dict) -> bool:
         return bool(cfg.get("tiktok_enabled"))
