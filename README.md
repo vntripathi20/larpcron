@@ -17,6 +17,7 @@ footage (stock APIs / TikTok creator / your clips) + quote + music
   - [Raspberry Pi](#raspberry-pi)
 - [First run](#first-run)
 - [Posting on a schedule](#posting-on-a-schedule)
+- [TikTok and YouTube Shorts](#tiktok-and-youtube-shorts)
 - [Automatic updates](#automatic-updates)
 - [Updating](#updating)
 - [When stuff breaks](#when-stuff-breaks)
@@ -213,6 +214,30 @@ You don't have to post every day. The Schedule tab has:
 
 The scheduler fires at every configured time each day and checks the day rules right then, so daylight saving clock changes don't mess up the pattern. Random shifts and skipped posts get decided at that moment too, which means Coming up shows the planned slots, not what will definitely happen.
 
+## TikTok and YouTube Shorts
+
+LarpCron can post the same reel to TikTok and YouTube Shorts after it posts to Instagram. It's optional and off by default. With both off, nothing about posting changes.
+
+Neither one uses an official API. LarpCron drives a hidden browser that's logged in to your account, with cookies you export from your own browser. Be straight with yourself about what that means:
+
+- Automated posting breaks both sites' rules. Accounts that get posted to by a script can be flagged, limited or banned. Use a throwaway account you can afford to lose, and don't post more than a couple of times a day.
+- Both sites change their pages now and then, and a flow that works today can break next month. When it breaks, the panel shows the error, and a screenshot of what the browser saw lands in `data/debug/`. The YouTube selectors all sit in one dict at the top of `larpcron/platforms/youtube.py`, so fixing it is usually a one line change.
+- Photo posts only go to Instagram. TikTok and YouTube get reels.
+- With Dry run on, nothing is uploaded anywhere. The reel is made and the log says what would have been posted.
+
+Setting it up:
+
+1. Install the browser, once, on the machine LarpCron runs on: `bash deploy/install-browser.sh`. It downloads Chromium for Playwright and the system libraries it needs, and asks for sudo. It's separate from the normal install on purpose, so nobody downloads a browser they don't use. It needs a 64-bit OS.
+2. Export your cookies. Log in to tiktok.com (or youtube.com) in a desktop browser, then use a cookie export extension on that tab. Get cookies.txt LOCALLY and Cookie-Editor both work. Copy the export, either Netscape cookies.txt text or JSON.
+3. Open the Platforms tab, tick the platform, paste the export into its box and press Save cookies. Only the cookies for that site are kept, in `data/tiktok_cookies.txt` or `data/youtube_cookies.txt`, readable only by your user. They're never logged and never shown in the panel again.
+4. Make a reel with Preview on the Home tab, then press Test upload. It uploads that reel as private and shows the result under the button. For YouTube it picks the Private option, so a test never goes public. For TikTok it asks for Only you, but TikTok's page can't be double checked, so there's a warning before the test. If it says the cookies expired, export them again.
+
+A few details. TikTok captions are cut to 150 characters. YouTube titles are cut to 100, get `#Shorts` added when it's missing, and the video is marked not made for kids. You pick public, unlisted or private for YouTube in the same tab. LarpCron checks the video is vertical and under 60 seconds before it opens YouTube, so keep the reel length under 60 in the Content tab.
+
+Uploads go one at a time, with a random pause of 30 to 120 seconds between platforms, because a Pi 3 only has about 1 GB of RAM. Each upload retries once if it fails, except when the cookies have expired, since trying again can't fix that. A failed platform never stops the next one.
+
+A Pi 3 is slow at this. Chromium on 1 GB of RAM works, but expect several minutes per upload, and add some swap if the system kills it. A Pi 4 or 5 is much better. If you're on a Pi 3 and the uploads time out, it's the hardware, not your cookies.
+
 ## Automatic updates
 
 If you installed with `deploy/install.sh`, LarpCron can keep itself up to date from this GitHub repo.
@@ -271,6 +296,8 @@ Moving to a new machine? Copy over `data/config.json`. It holds your settings an
 | Quote text looks tiny or the font is off on Linux | `sudo apt install fonts-dejavu-core`. |
 | Music link fails or the reel is silent | The log (bottom of the Home tab) says why. Update yt-dlp (`pip install -U yt-dlp`), and on a Pi run `sudo apt install nodejs`. The video might also be unavailable or region-locked. LarpCron then falls back to local tracks, or a silent reel. |
 | TikTok clip download fails | `pip install -U yt-dlp`. TikTok may also be blocking your IP, so try again later. |
+| TikTok or YouTube says the cookies expired | Export them again from a logged-in browser and paste them in the Platforms tab. They don't last forever. |
+| TikTok or YouTube upload fails, or "Chromium isn't installed" | Run `bash deploy/install-browser.sh`. For anything else, look at the screenshot in `data/debug/` (the error names it). The page probably changed, and on YouTube the selectors at the top of `larpcron/platforms/youtube.py` are what to fix. |
 | Instagram says the version is out of date | LarpCron upgrades instagrapi and retries once by itself. If password login is still rejected (the panel says "Instagram rejected password login"), log in with a session cookie, steps below. |
 | Instagram login fails / "challenge required" | Open the Instagram app on your phone and approve the "was this you?" prompt, then try again. Delete `data/instagram_session.json` to force a fresh login. New IPs logging in a lot is what usually triggers these. |
 | Reel posted but muted | Instagram caught copyrighted music. Use royalty-free tracks. |
@@ -364,6 +391,11 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 | `auto_update_deps` | `true` | Upgrade instagrapi and yt-dlp daily, and put the old versions back if the new ones fail |
 | `instagram_sessionid` | empty | The `sessionid` cookie of a logged-in browser. When set, LarpCron uses it instead of the password |
 | `instagram_app_version` | empty | Advanced. An object with `app_version`, `version_code` and `bloks_versioning_id`, applied before login, so you can follow Instagram's version changes without a code update |
+| `tiktok_enabled` | `false` | Also post reels to TikTok (needs `deploy/install-browser.sh` and cookies, see above) |
+| `tiktok_caption_template` | empty | TikTok caption. Empty reuses `caption_template`. Cut to 150 characters |
+| `youtube_enabled` | `false` | Also post reels to YouTube Shorts |
+| `youtube_title_template` | `{quote}` | YouTube title. `#Shorts` is added if it's missing |
+| `youtube_visibility` | `public` | `public`, `unlisted` or `private` |
 | `ui_password` | `larp` | Panel password (username is `admin`) |
 
 ## Before you post for real
@@ -371,7 +403,8 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 - LarpCron posts through Instagram's unofficial private API, using [instagrapi](https://github.com/subzeroid/instagrapi). The official Graph API wants a Business account, a Facebook Page and a public URL for every video, which doesn't work well on a Pi. The catch is that automated posting breaks Instagram's Terms of Use and can get you login challenges or a ban. Use an account you can afford to lose, don't post more than a couple of times a day, and leave Dry run on until you like the results.
 - Pexels and Pixabay footage is free to use, but check their licenses for your situation. A lot of quotes are public domain, and the caption credits the author by default.
 - The panel uses basic auth over plain HTTP. That's fine on your own hotspot or home network, but don't put it on the open internet.
-- Credentials sit in plain text in `data/config.json`, so keep that file off shared machines.
+- Credentials sit in plain text in `data/config.json`, and the TikTok and YouTube cookie files in `data/` are as good as a password, so keep that folder off shared machines.
+- TikTok and YouTube posting is browser automation with your own cookies, which both sites forbid. The same advice applies: a throwaway account, a couple of posts a day at most, and Dry run on until you've looked at a Test upload.
 
 ## What's where
 
@@ -383,13 +416,14 @@ larpcron/
   music.py      YouTube audio download + smart start (heatmap / loudest window)
   reel.py       Pillow overlay + ffmpeg render (reel or 4:5 photo), music selection
   split.py      cut a compilation into clips
-  instagram.py  uploader
+  instagram.py  Instagram uploader
+  platforms/    posting plugins: Instagram, TikTok, YouTube Shorts (browser based ones in tiktok.py and youtube.py)
   job.py        render + post pipeline, history, logs
   scheduler.py  APScheduler cron jobs
   updates.py    panel side of auto-update (reads what update.sh writes)
   web.py        control panel (templates/index.html)
 assets/         your own clips (backgrounds/) and music
-deploy/         install.sh, update.sh, systemd units and timer, hotspot script
+deploy/         install.sh, install-browser.sh, update.sh, systemd units and timer, hotspot script
 ```
 
 ## Credits
