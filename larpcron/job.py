@@ -6,7 +6,8 @@ import threading
 import time
 from collections import deque
 
-from . import config, instagram, media, quotes, reel
+from . import config, media, platforms, quotes, reel
+from .platforms import status as platform_status
 
 _run_lock = threading.Lock()
 LOG: deque = deque(maxlen=200)
@@ -57,6 +58,40 @@ def update_in_progress() -> bool:
         return False
 
 
+PAUSE_BETWEEN_PLATFORMS = (30, 120)  # seconds, random. The Pi 3B has about 1 GB of RAM, so uploads go one at a time.
+
+
+def _pause_between_platforms() -> None:
+    wait = random.uniform(*PAUSE_BETWEEN_PLATFORMS)
+    log(f"Waiting {int(wait)} seconds before the next platform.")
+    time.sleep(wait)
+
+
+def post_everywhere(cfg: dict, kind: str, out, quote: str, author: str, caption: str) -> dict:
+    """Post one file to every enabled platform, one after another. One platform failing never stops the next.
+
+    Returns {platform key: {"ok": bool, "text": result or error}} for the platforms that were tried."""
+    results: dict = {}
+    for p in platforms.enabled_platforms(cfg):
+        if kind not in p.kinds:
+            log(f"{p.name}: skipped, it only takes videos.")
+            continue
+        if results:
+            _pause_between_platforms()
+        log(f"Uploading to {p.name}...")
+        try:
+            ref = p.post(out, p.make_caption(cfg, quote, author, caption), cfg)
+        except Exception as e:  # noqa: BLE001 - any failure is reported, then the next platform goes
+            log(f"{p.name}: ERROR {e}")
+            results[p.key] = {"ok": False, "text": str(e)}
+            platform_status.record(p.key, False, str(e))
+        else:
+            log(f"{p.name}: posted" + (f" {p.link(ref)}" if ref else ""))
+            results[p.key] = {"ok": True, "text": str(ref or "")}
+            platform_status.record(p.key, True, p.link(ref) if ref else "posted")
+    return results
+
+
 def run_once(post: bool) -> dict | None:
     """Render one piece of content. post=True also publishes (unless dry_run is on)."""
     if not _run_lock.acquire(blocking=False):
@@ -90,12 +125,20 @@ def run_once(post: bool) -> dict | None:
         result = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind, "file": out.name,
                   "quote": quote, "author": author, "source": source, "posted": False, "code": None}
         if post and not cfg["dry_run"]:
-            log("Uploading to Instagram...")
-            code = (instagram.post_reel if kind == "reel" else instagram.post_photo)(cfg, out, caption)
-            result.update(posted=True, code=code)
-            log(f"Posted! https://www.instagram.com/p/{code}/")
+            outcome = post_everywhere(cfg, kind, out, quote, author, caption)
+            failed = {k: v["text"] for k, v in outcome.items() if not v["ok"]}
+            if outcome and len(failed) == len(outcome):  # nothing got posted: same as a failed run
+                names = {p.key: p.name for p in platforms.all_platforms()}
+                raise RuntimeError(next(iter(failed.values())) if len(failed) == 1
+                                   else "; ".join(f"{names[k]}: {v}" for k, v in failed.items()))
+            if outcome:
+                result.update(posted=True, code=(outcome.get("instagram") or {}).get("text") if (outcome.get("instagram") or {}).get("ok") else None)
+            if len(outcome) > 1 or "instagram" not in outcome:
+                result["platforms"] = {k: ("posted" if v["ok"] else "error: " + v["text"]) for k, v in outcome.items()}
         elif post:
-            log("Dry run is ON - not posting to Instagram.")
+            for p in platforms.enabled_platforms(cfg):
+                if kind in p.kinds:
+                    log(f"Dry run is ON - not posting to {p.name}.")
         _add_history(result)
         STATE["last_result"] = result
         return result
