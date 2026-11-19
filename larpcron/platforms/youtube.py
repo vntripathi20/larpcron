@@ -6,6 +6,7 @@ that no longer matches is in SELECTORS below. That dict is the only place that k
 
 Automated uploads are against YouTube's terms and can get a channel flagged. Use one you can lose.
 """
+import re
 import time
 from pathlib import Path
 
@@ -30,6 +31,10 @@ SELECTORS = {
     "upload_progress": "ytcp-video-upload-progress",
     "published_close": "#close-button",                        # "Video published" dialog
     "video_link": "ytcp-video-share-dialog a[href*='youtu'], .video-url-fadeable a",
+    # The "unsupported or old browser" page Studio can put in front of itself. Matched by its visible text.
+    "skip_interstitial": re.compile(r"skip to youtube studio", re.IGNORECASE),
+    # First-run notices that can sit in front of Studio. Only dismiss-type buttons, never anything that turns a setting on.
+    "dismiss_buttons": re.compile(r"^\s*(got it|dismiss|not now|no,? thanks)\s*$", re.IGNORECASE),
 }
 SIGNED_OUT_URL_PARTS = ("accounts.google.com", "ServiceLogin", "/signin")
 NEXT_CLICKS = 3                 # Details, Video elements, Checks, then the Visibility page
@@ -75,8 +80,33 @@ def _step(state: dict, name: str) -> None:
     state["step"] = name
 
 
+def dismiss_interruptions(page, log=None) -> bool:
+    """Click away what can sit in front of Studio: the "unsupported browser" page (its Skip link) and
+    first-run notices. Returns True if anything was dismissed. Short waits, so it costs little when there is nothing."""
+    S = SELECTORS
+    dismissed = False
+    for _ in range(4):
+        clicked = False
+        for label, locator in (("the unsupported browser page", page.get_by_text(S["skip_interstitial"])),
+                               ("a notice", page.get_by_role("button", name=S["dismiss_buttons"]))):
+            try:
+                target = locator.first
+                if target.is_visible(timeout=1500):
+                    target.click(timeout=5000)
+                    clicked = dismissed = True
+                    if log:
+                        log(f"YouTube: dismissed {label}")
+                    time.sleep(1.5)
+                    break
+            except Exception:  # noqa: BLE001 - nothing there, or it closed itself
+                continue
+        if not clicked:
+            break
+    return dismissed
+
+
 def upload_flow(page, video: Path, title: str, description: str, visibility: str, state: dict,
-                step_ms: int = STEP_TIMEOUT_MS, nav_ms: int = STEP_TIMEOUT_MS, light=None) -> str:
+                step_ms: int = STEP_TIMEOUT_MS, nav_ms: int = STEP_TIMEOUT_MS, light=None, log=None) -> str:
     """The Studio upload dialog, start to finish. Returns the video link if Studio shows one.
 
     step_ms is the wait for each click or selector, nav_ms the wait for a page to load. light, if given, is
@@ -86,7 +116,10 @@ def upload_flow(page, video: Path, title: str, description: str, visibility: str
     try:
         browser_helpers.goto(page, S["studio_url"], "youtube", "YouTube Studio", nav_ms)
         try:
-            page.wait_for_selector(S["logged_in_marker"], timeout=step_ms)
+            # Either the Create button or the "unsupported browser" page can show up first.
+            page.locator(S["logged_in_marker"]).or_(page.get_by_text(S["skip_interstitial"])).first.wait_for(timeout=step_ms)
+            if dismiss_interruptions(page, log):
+                page.wait_for_selector(S["logged_in_marker"], timeout=step_ms)
         except Exception:  # noqa: BLE001
             if any(part in page.url for part in SIGNED_OUT_URL_PARTS):
                 raise CookieExpired(EXPIRED) from None
@@ -98,6 +131,7 @@ def upload_flow(page, video: Path, title: str, description: str, visibility: str
         raise CookieExpired(EXPIRED)
 
     _step(state, "opening the upload dialog")
+    dismiss_interruptions(page, log)
     page.click(S["create_button"], timeout=step_ms)
     page.click(S["upload_menu_item"], timeout=step_ms)
     page.wait_for_selector(S["file_input"], state="attached", timeout=step_ms)
@@ -171,6 +205,8 @@ class YouTube(Platform):
         return with_retry(lambda: self._upload_once(video_path, title, description, visibility, cfg), log=job.log)
 
     def _upload_once(self, video: Path, title: str, description: str, visibility: str, cfg: dict) -> str:
+        from .. import job
+
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -182,13 +218,16 @@ class YouTube(Platform):
         try:
             pw = sync_playwright().start()
             browser = pw.chromium.launch(headless=True, args=browser_helpers.launch_args())
-            context = browser.new_context(viewport=browser_helpers.VIEWPORT, locale="en-US")
+            context = browser.new_context(viewport=browser_helpers.VIEWPORT, locale="en-US",
+                                          user_agent=browser_helpers.chrome_user_agent(browser.version))
+            context.add_init_script(browser_helpers.HIDE_WEBDRIVER)
             context.add_cookies(cookie_store.to_playwright(cookie_store.load(self.key)))
             page = context.new_page()
             page.set_default_timeout(action_ms)
             page.set_default_navigation_timeout(nav_ms)
             light = browser_helpers.LightPage(page).on()  # no images, fonts, media or analytics while logging in
-            link = upload_flow(page, video, title, description, visibility, state, step_ms=action_ms, nav_ms=nav_ms, light=light)
+            link = upload_flow(page, video, title, description, visibility, state, step_ms=action_ms, nav_ms=nav_ms,
+                               light=light, log=job.log)
             return link or f"uploaded ({visibility})"
         except PlatformError as e:
             self._screenshot(page, e)

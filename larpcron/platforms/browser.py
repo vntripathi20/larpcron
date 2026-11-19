@@ -47,6 +47,19 @@ def timeouts(cfg: dict) -> tuple[int, int]:
     return seconds("browser_nav_timeout_s", DEFAULT_NAV_S) * 1000, seconds("browser_action_timeout_s", DEFAULT_ACTION_S) * 1000
 
 
+def chrome_user_agent(browser_version: str) -> str:
+    """A normal desktop Chrome user agent for the Chromium that is actually running. Headless Chromium announces
+    itself as "HeadlessChrome", and YouTube Studio answers that with an "unsupported browser" page."""
+    major = (browser_version or "").split(".")[0]
+    if not major.isdigit():
+        major = "130"
+    return (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{major}.0.0.0 Safari/537.36")
+
+
+HIDE_WEBDRIVER = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+
+
 def needs_no_sandbox() -> bool:
     """Chromium refuses to start as root without --no-sandbox. A normal user, which is what install.sh sets up,
     keeps the sandbox."""
