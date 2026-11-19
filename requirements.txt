@@ -7,3 +7,5 @@ instagrapi>=2.1
 tzdata
 yt-dlp
 numpy
+tiktok-uploader>=1.2
+playwright>=1.40

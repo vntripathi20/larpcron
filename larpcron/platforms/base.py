@@ -10,8 +10,12 @@ class PlatformError(RuntimeError):
     """A failure with a message that is fine to show in the panel."""
 
 
-class CookieExpired(PlatformError):
-    """The saved browser cookies no longer log in. Retrying will not help."""
+class Permanent(PlatformError):
+    """A failure that trying again cannot fix, such as a missing browser."""
+
+
+class CookieExpired(Permanent):
+    """The saved browser cookies no longer log in."""
 
 
 class Platform:
@@ -41,11 +45,11 @@ class Platform:
 
 
 def with_retry(fn, attempts: int = 2, pause=(20, 45), log=None):
-    """Call fn(). If it fails, wait a little and try once more. A CookieExpired is never retried."""
+    """Call fn(). If it fails, wait a little and try once more. A Permanent error (expired cookies, no browser) is never retried."""
     for attempt in range(1, attempts + 1):
         try:
             return fn()
-        except CookieExpired:
+        except Permanent:
             raise
         except Exception as e:
             if attempt == attempts:
@@ -67,3 +71,22 @@ def probe_video(path: Path) -> tuple[int, int, float]:
         raise PlatformError(f"Couldn't read the video {path.name}.")
     seconds = int(dur.group(1)) * 3600 + int(dur.group(2)) * 60 + float(dur.group(3))
     return int(size.group(1)), int(size.group(2)), seconds
+
+
+DEBUG_DIR = None  # set lazily, so tests can point it somewhere else
+
+
+def save_debug_screenshot(page, key: str) -> str:
+    """Save what the browser was showing when an upload failed. Returns the file name, or "" if it couldn't."""
+    from .. import config
+
+    folder = DEBUG_DIR or (config.DATA / "debug")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / f"{key}-{time.strftime('%Y%m%d-%H%M%S')}.png"
+        page.screenshot(path=str(dest), full_page=True, timeout=15000)
+        for old in sorted(folder.glob(f"{key}-*.png"))[:-10]:  # keep the newest ten per platform
+            old.unlink(missing_ok=True)
+        return dest.name
+    except Exception:  # noqa: BLE001 - a missing screenshot must never hide the real error
+        return ""

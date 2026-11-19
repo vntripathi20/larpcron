@@ -25,6 +25,8 @@ DEFAULTS = {
     "auto_update_deps": True,      # keep instagrapi and yt-dlp current (they break when the platforms change)
     "instagram_sessionid": "",     # sessionid cookie from a logged-in browser; skips password login when set
     "instagram_app_version": {},   # advanced override: {"app_version", "version_code", "bloks_versioning_id"}
+    "tiktok_enabled": False,       # post reels to TikTok too, through a logged-in browser session
+    "tiktok_caption_template": "", # empty = use caption_template. Cookies live in data/tiktok_cookies.txt
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram
