@@ -27,6 +27,9 @@ DEFAULTS = {
     "instagram_app_version": {},   # advanced override: {"app_version", "version_code", "bloks_versioning_id"}
     "tiktok_enabled": False,       # post reels to TikTok too, through a logged-in browser session
     "tiktok_caption_template": "", # empty = use caption_template. Cookies live in data/tiktok_cookies.txt
+    "youtube_enabled": False,      # post reels to YouTube Shorts too, through YouTube Studio and a logged-in session
+    "youtube_title_template": "{quote}",  # "#Shorts" is added if missing. Cookies live in data/youtube_cookies.txt
+    "youtube_visibility": "public",       # public | unlisted | private
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram

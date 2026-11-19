@@ -9,8 +9,9 @@ from .base import CookieExpired, Platform, PlatformError, with_retry
 def all_platforms() -> list[Platform]:
     from .instagram import Instagram
     from .tiktok import TikTok
+    from .youtube import YouTube
 
-    return [Instagram(), TikTok()]
+    return [Instagram(), TikTok(), YouTube()]
 
 
 def get(key: str) -> Platform | None:
