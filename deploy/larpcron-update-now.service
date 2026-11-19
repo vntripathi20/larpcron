@@ -1,0 +1,13 @@
+[Unit]
+Description=LarpCron update, started from the panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# A separate unit, so restarting larpcron.service in the middle of an update doesn't kill the update.
+# deploy/install.sh rewrites User and the path for your machine.
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/LarpCron
+ExecStart=/bin/bash /home/pi/LarpCron/deploy/update.sh --now
+Nice=10

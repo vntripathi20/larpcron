@@ -1,5 +1,6 @@
 """The pipeline: pick footage + quote -> render -> (optionally) post. Keeps a rolling log and history."""
 import json
+import os
 import random
 import threading
 import time
@@ -11,6 +12,11 @@ _run_lock = threading.Lock()
 LOG: deque = deque(maxlen=200)
 STATE = {"busy": False, "last_result": None}
 HISTORY_FILE = config.DATA / "history.json"
+
+# Files shared with deploy/update.sh, which is a separate process and can't see the in-memory lock above.
+RUN_FILE = config.DATA / "run.lock"      # present while a render/post is running: "pid=..." and "since=..."
+UPDATING_FILE = config.DATA / "updating"  # present while update.sh is replacing the code
+UPDATE_MARKER_MAX_AGE = 20 * 60           # ignore a marker left behind by an update that died
 
 
 def log(msg: str) -> None:
@@ -30,14 +36,44 @@ def _add_history(entry: dict) -> None:
     HISTORY_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
 
 
+def _write_run_file() -> None:
+    try:
+        RUN_FILE.write_text("pid=%d\nsince=%d\n" % (os.getpid(), time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _remove_run_file() -> None:
+    try:
+        RUN_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def update_in_progress() -> bool:
+    try:
+        return time.time() - UPDATING_FILE.stat().st_mtime < UPDATE_MARKER_MAX_AGE
+    except OSError:
+        return False
+
+
 def run_once(post: bool) -> dict | None:
     """Render one piece of content. post=True also publishes (unless dry_run is on)."""
     if not _run_lock.acquire(blocking=False):
         log("Another run is already in progress, skipping.")
         return None
     STATE["busy"] = True
+    wrote_run_file = False
     try:
         config.ensure_dirs()
+        # Announce the run first, then look for an update. update.sh does the reverse (marker first, then
+        # looks for the run file), so one of the two always notices the other.
+        _write_run_file()
+        wrote_run_file = True
+        if update_in_progress():
+            log("An update is being installed, so this run was skipped.")
+            STATE["last_result"] = {"error": "An update is being installed. Try again in a minute."}
+            return None
         cfg = config.load()
         mode = cfg["content_mode"]
         kind = random.choice(["reel", "reel", "photo"]) if mode == "mix" else mode
@@ -68,6 +104,8 @@ def run_once(post: bool) -> dict | None:
         STATE["last_result"] = {"error": str(e)}
         return None
     finally:
+        if wrote_run_file:
+            _remove_run_file()
         STATE["busy"] = False
         _run_lock.release()
 

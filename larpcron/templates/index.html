@@ -118,6 +118,7 @@
     <button type="button" data-tab="music">Music</button>
     <button type="button" data-tab="schedule">Schedule</button>
     <button type="button" data-tab="accounts">Accounts</button>
+    <button type="button" data-tab="updates">Updates</button>
   </nav>
 </header>
 
@@ -379,6 +380,35 @@
     </section>
   </section>
 
+  <!-- Updates -->
+  <section class="tab" data-tab="updates">
+    <h2>Updates</h2><p class="sub">Keeping LarpCron current.</p>
+
+    <section class="block">
+      <h3>Automatic updates</h3>
+      <label class="tick"><input type="checkbox" name="auto_update" {{ 'checked' if cfg.auto_update }}>
+        <div><b>Update automatically</b><span>Around 4 AM each day, LarpCron checks the project's GitHub repo and installs anything new. Updates only ever come from {{ up.origin or 'the repo this was cloned from' }}. Your settings and everything in data/ are left alone.</span></div></label>
+      {% if not up.can_update %}
+      <p class="hint" style="margin:6px 0 0">Updating by itself needs the setup from <code>deploy/install.sh</code>, which isn't on this machine. Here, update with <code>git pull</code> and restart LarpCron.</p>
+      {% elif cfg.auto_update and not up.timer_enabled %}
+      <p class="hint" style="margin:6px 0 0">The daily timer isn't switched on. Run <code>sudo systemctl enable --now larpcron-update.timer</code> to start it.</p>
+      {% endif %}
+    </section>
+
+    <section class="block">
+      <h3>This version</h3>
+      {% if up.version.commit %}
+      <p style="margin:0"><code>{{ up.version.commit }}</code> from {{ up.version.date }}</p>
+      <p class="hint" style="margin:2px 0 14px">{{ up.version.subject }}</p>
+      {% else %}<p class="hint" style="margin:0 0 14px">Can't tell, because this isn't a git checkout.</p>{% endif %}
+      <p style="margin:0">Last update: <span id="updLast">{{ up.last_text }}</span></p>
+      <p style="margin:14px 0 0"><button type="button" class="btn" id="btnUpdate" {{ 'disabled' if up.running }}>Update now</button>
+        <span class="hint" id="updMsg">{% if up.running %}An update is running.{% endif %}</span></p>
+    </section>
+
+    <section class="block"><details><summary>Update log</summary><pre id="updLog">{{ up.log or 'Nothing logged yet.' }}</pre></details></section>
+  </section>
+
   <div class="savebar"><div class="in">
     <span class="msg" id="saveMsg">No unsaved changes.</span>
     <button class="btn solid" type="submit" id="btnSave">Save settings</button>
@@ -389,7 +419,7 @@
 <script>
 document.documentElement.classList.add('js');
 (function () {
-  var TABS = ['home', 'content', 'music', 'schedule', 'accounts'];
+  var TABS = ['home', 'content', 'music', 'schedule', 'accounts', 'updates'];
   var form = document.getElementById('settingsform');
   var dirty = false;
 
@@ -521,6 +551,43 @@ document.documentElement.classList.add('js');
   }
   btns[0].addEventListener('click', function (e) { e.preventDefault(); runHere('preview'); });
   btns[1].addEventListener('click', function (e) { e.preventDefault(); runHere('post'); });
+  // Updates tab: "Update now" starts the update unit, then we watch for the result. The panel restarts
+  // itself during a real update, so failed polls are expected for a few seconds.
+  var btnUpdate = document.getElementById('btnUpdate'), updMsg = document.getElementById('updMsg');
+  var updLast = document.getElementById('updLast'), updEpoch = {{ (up.last.epoch or 0)|tojson }};
+  var updTimer = null, updWaitUntil = 0;
+  function updStop(message) {
+    clearInterval(updTimer); updTimer = null; btnUpdate.disabled = false; updMsg.textContent = message;
+  }
+  function updPoll() {
+    fetch('/update/status', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (u) {
+      updLast.textContent = u.last_text;
+      if (!u.running && (u.last.epoch || 0) !== updEpoch) {
+        updEpoch = u.last.epoch || 0;
+        if (u.last.result === 'updated') {
+          updStop(dirty ? 'Updated. Reload the page to use the new version.' : 'Updated. Reloading...');
+          if (!dirty) setTimeout(function () { location.reload(); }, 1200);
+        } else { updStop(''); }
+      } else if (Date.now() > updWaitUntil) {
+        updStop('No answer yet. Look at the update log in a minute.');
+      }
+    }).catch(function () {
+      if (Date.now() > updWaitUntil) { updStop('The panel did not come back. Check the update log on the device.'); }
+      else { updMsg.textContent = 'Restarting...'; }
+    });
+  }
+  function updWatch() { updWaitUntil = Date.now() + 180000; if (!updTimer) { updTimer = setInterval(updPoll, 2000); } }
+  if (btnUpdate) {
+    btnUpdate.addEventListener('click', function () {
+      btnUpdate.disabled = true; updMsg.textContent = 'Starting...';
+      fetch('/update/run', { method: 'POST', credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+        updMsg.textContent = d.message;
+        if (d.ok) { updWatch(); } else { btnUpdate.disabled = false; }
+      }).catch(function () { updMsg.textContent = 'Could not reach the server.'; btnUpdate.disabled = false; });
+    });
+    {% if up.running %}updWatch();{% endif %}
+  }
+
   {% if st.busy %}start();{% endif %}
   if (!timer) poll();
 })();

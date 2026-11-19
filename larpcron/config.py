@@ -21,6 +21,7 @@ DEFAULTS = {
     "pixabay_api_key": "",         # free key: https://pixabay.com/api/docs/
     "smart_music_start": True,     # start music at its best part (manual start times always win)
     "music_links": [],             # YouTube links, one per line: "<url> [start e.g. 1:12]"
+    "auto_update": True,           # pull updates from the project's GitHub repo (see deploy/update.sh)
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram

@@ -1,0 +1,12 @@
+[Unit]
+Description=LarpCron update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# deploy/install.sh rewrites User and the path for your machine
+User=pi
+WorkingDirectory=/home/pi/LarpCron
+ExecStart=/bin/bash /home/pi/LarpCron/deploy/update.sh
+Nice=10

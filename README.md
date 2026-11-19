@@ -17,6 +17,7 @@ footage (stock APIs / TikTok creator / your clips) + quote + music
   - [Raspberry Pi](#raspberry-pi)
 - [First run](#first-run)
 - [Posting on a schedule](#posting-on-a-schedule)
+- [Automatic updates](#automatic-updates)
 - [Updating](#updating)
 - [When stuff breaks](#when-stuff-breaks)
 - [Footage](#footage)
@@ -89,7 +90,7 @@ pip install -r requirements.txt
 python -m larpcron
 ```
 
-`fonts-dejavu-core` is there so the quote text gets a proper font. With no fonts installed it falls back to a tiny default that looks bad. To keep it running all the time, use the systemd steps in the Pi section below, which work on any systemd Linux.
+`fonts-dejavu-core` is there so the quote text gets a proper font. With no fonts installed it falls back to a tiny default that looks bad. To keep it running all the time, use the systemd steps in the Pi section below, which work on any systemd Linux. On Debian or Ubuntu you can also skip all of this and run `bash deploy/install.sh` from inside the cloned repo, which does every step for you (see the Pi section).
 
 ### Raspberry Pi
 
@@ -108,7 +109,24 @@ This is what the project was built for. The Pi sits plugged in somewhere, posts 
 3. Hit the gear icon / "Edit settings" and set a hostname (like `larpcron`), a username and password, your home Wi-Fi (just for setup), and turn on SSH.
 4. Write the card, stick it in the Pi, and power it on.
 
-#### 3. Connect and install
+#### 3. Install
+
+```bash
+ssh <your-user>@larpcron.local        # or use the Pi's IP address from your router
+sudo apt update && sudo apt full-upgrade -y
+sudo apt install -y git
+git clone https://github.com/vntripathi20/LarpCron.git
+cd LarpCron
+bash deploy/install.sh
+```
+
+The installer does the rest. It installs the packages (Python venv, ffmpeg, fonts, nodejs), builds the virtualenv, installs the requirements (several minutes on a Pi, so be patient), sets LarpCron up as a service that starts at boot, and asks whether you want [automatic updates](#automatic-updates). Add `--no-auto-update` to skip that question, which is handy for unattended installs, or `--dry-run` to see everything it would do without changing anything. When it's done it prints the address to open, and from another device on your network that's `http://larpcron.local:8080` (or `http://<pi-ip>:8080`).
+
+To let the panel's Update now button and the daily updater restart the service without asking for a password, the installer adds one small sudo rule. It allows your user to run exactly two commands, `systemctl restart larpcron` and `systemctl start --no-block larpcron-update-now.service`, and nothing else.
+
+#### 4. Manual install (if you'd rather not use the script)
+
+This is what the script does, one step at a time.
 
 ```bash
 ssh <your-user>@larpcron.local        # or use the Pi's IP address from your router
@@ -125,7 +143,7 @@ python -m larpcron                     # quick test; Ctrl+C to stop
 
 From another device on the same network, open `http://larpcron.local:8080` (or `http://<pi-ip>:8080`, and `hostname -I` will tell you the IP). `nodejs` is only in there so yt-dlp can handle YouTube music links, so skip it if you won't use those.
 
-#### 4. Run it at boot (systemd)
+##### Run it at boot (systemd)
 
 The included unit file assumes the user `pi` and the folder `/home/pi/LarpCron`. This command swaps in your own user and path while it installs the file:
 
@@ -195,7 +213,28 @@ You don't have to post every day. The Schedule tab has:
 
 The scheduler fires at every configured time each day and checks the day rules right then, so daylight saving clock changes don't mess up the pattern. Random shifts and skipped posts get decided at that moment too, which means Coming up shows the planned slots, not what will definitely happen.
 
+## Automatic updates
+
+If you installed with `deploy/install.sh`, LarpCron can keep itself up to date from this GitHub repo.
+
+Around 4 AM every day (plus a random delay of up to half an hour, so not every Pi hits GitHub at the same second), a small script checks whether the repo has new commits. If it does, it pulls them, reinstalls the requirements, upgrades yt-dlp, restarts LarpCron and checks that it came back up. If pip or the restart fails, or LarpCron isn't running afterward, it rolls back to the version you had and writes down what went wrong.
+
+It sticks to a few rules:
+
+- It only pulls from the `origin` remote of your checkout, fast-forward only, and the only script it runs from the repo is `deploy/update.sh`.
+- It waits if a reel is rendering or posting, and tries again next time. A new run also won't start while an update is being installed.
+- It skips the update if you've edited tracked files in the install folder, so it never overwrites your changes.
+- It never touches your settings or anything else in `data/`. The only files it writes there are its own: `update.log`, `update_status.json` and two short-lived lock files.
+
+The Updates tab in the panel has the switch ("Update automatically"), the version you're on, how the last update went, and an Update now button that runs the same update right away, even with the daily updates off. To turn the daily updates off, untick the box and save, and the daily check will exit as soon as it starts. To stop the timer completely, run `sudo systemctl disable --now larpcron-update.timer`. You can also pass `--no-auto-update` to the installer so it never gets turned on.
+
+The full history is in `data/update.log`, and `journalctl -u larpcron-update` shows what the timer ran. To run an update by hand: `bash deploy/update.sh --now`.
+
+One thing to be aware of: with automatic updates on, whatever lands on the repo's main branch runs on your Pi, including the packages it installs. That's true of any auto-updater, so leave it off if you'd rather read the changes first and `git pull` yourself. If you cloned a fork, updates come from the fork, since the updater just follows whatever `origin` points at.
+
 ## Updating
+
+If you turned on automatic updates you can skip this, because that's the same thing happening for you. Otherwise, by hand:
 
 ```bash
 cd LarpCron
@@ -224,6 +263,7 @@ Moving to a new machine? Copy over `data/config.json`. It holds your settings an
 | Reel posted but muted | Instagram caught copyrighted music. Use royalty-free tracks. |
 | Schedule didn't fire | "Post automatically" has to be ticked and saved, LarpCron had to be running at that time, and the timezone has to be right (Schedule tab). A run that's up to 10 minutes late still fires. |
 | `pip install` fails on a Pi | Update first (`sudo apt full-upgrade`), make sure you're on 64-bit OS, and retry. Big wheels can time out on a slow connection. |
+| Updates aren't happening | Look at `data/update.log`. The usual reasons: the toggle on the Updates tab is off, a reel was being made (it tries again next time), someone edited files in the install folder, or the timer isn't on (`systemctl list-timers | grep larpcron`). |
 | Port 8080 already in use | Run it on another port: `python -m larpcron --port 9000`. |
 
 ---
@@ -295,6 +335,7 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 | `pause_until` | empty | A date (YYYY-MM-DD). Nothing posts through that day |
 | `enabled` | `false` | Post automatically on the schedule |
 | `dry_run` | `true` | Make reels but never post them |
+| `auto_update` | `true` | Check this GitHub repo daily and install new versions (needs the `deploy/install.sh` setup) |
 | `ui_password` | `larp` | Panel password (username is `admin`) |
 
 ## Before you post for real
@@ -317,9 +358,10 @@ larpcron/
   instagram.py  uploader
   job.py        render + post pipeline, history, logs
   scheduler.py  APScheduler cron jobs
+  updates.py    panel side of auto-update (reads what update.sh writes)
   web.py        control panel (templates/index.html)
 assets/         your own clips (backgrounds/) and music
-deploy/         systemd unit, hotspot script
+deploy/         install.sh, update.sh, systemd units and timer, hotspot script
 ```
 
 ## Credits

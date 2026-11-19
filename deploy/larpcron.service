@@ -3,7 +3,7 @@ Description=LarpCron
 After=network-online.target
 
 [Service]
-# Adjust User and paths if you cloned somewhere other than /home/pi/LarpCron
+# deploy/install.sh rewrites User and the paths for your machine
 User=pi
 WorkingDirectory=/home/pi/LarpCron
 ExecStart=/home/pi/LarpCron/.venv/bin/python -m larpcron --port 8080

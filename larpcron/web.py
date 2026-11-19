@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_from_directory, url_for
 
-from . import config, job, media, music, scheduler
+from . import config, job, media, music, scheduler, updates
 
 app = Flask(__name__)
 
@@ -75,6 +75,7 @@ def index():
         "index.html", cfg=cfg, st=_status(), hist=job.history()[::-1][:8],
         checks=_readiness(cfg), timezones=sorted(zoneinfo.available_timezones()),
         upcoming=[scheduler.format_slot(d) for d in scheduler.upcoming(cfg, 6)], summary=scheduler.describe(cfg),
+        up=updates.info(),
     )
 
 
@@ -98,6 +99,7 @@ def settings():
     cfg["enabled"] = "enabled" in f
     cfg["dry_run"] = "dry_run" in f
     cfg["smart_music_start"] = "smart_music_start" in f
+    cfg["auto_update"] = "auto_update" in f
     cfg["content_mode"] = f.get("content_mode", "reel") if f.get("content_mode") in ("reel", "photo", "mix") else "reel"
     cfg["footage_source"] = f.get("footage_source") if f.get("footage_source") in ("any", "online", "pexels", "pixabay", "tiktok", "local") else "any"
     cfg["quote_source"] =f.get("quote_source", "mixed") if f.get("quote_source") in ("local", "online", "mixed") else "mixed"
@@ -144,6 +146,19 @@ def settings():
     if run in ("preview", "post"):
         job.run_async(post=(run == "post"))
     return redirect(url_for("index"))
+
+
+@app.get("/update/status")
+def update_status():
+    resp = jsonify(updates.live())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/update/run")
+def update_run():
+    started, message = updates.request_update()
+    return jsonify({"ok": started, "message": message}), (200 if started else 409)
 
 
 @app.post("/generate")
