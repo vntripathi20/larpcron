@@ -11,7 +11,8 @@ from pathlib import Path
 
 from .. import config
 from . import cookies as cookie_store
-from .base import CookieExpired, Permanent, Platform, PlatformError, probe_video, save_debug_screenshot, with_retry
+from .base import (LOW_MEMORY_ARGS, CookieExpired, Permanent, Platform, PlatformError, browser_timeouts, probe_video,
+                   save_debug_screenshot, tune_page, with_retry)
 
 DOMAINS = ("tiktok.com",)
 LOGIN_COOKIES = ("sessionid", "sessionid_ss")
@@ -51,31 +52,44 @@ def _quiet_library():
 
 
 @contextlib.contextmanager
-def _track_playwright():
-    """tiktok-uploader starts a Playwright driver process and never stops it. Remember it so we can."""
+def _track_playwright(cfg: dict):
+    """tiktok-uploader starts a Playwright driver process and never stops it, launches Chromium with no
+    low-memory flags, and gives every wait 30 s. We hand it our own browser launcher (same window, user agent
+    and webdriver mask as the library's, plus the Pi-friendly settings) and stretch its waits. Everything is
+    put back afterwards. The Playwright drivers it starts are remembered so we can stop them."""
     from playwright.sync_api import sync_playwright
-    import tiktok_uploader.browsers as browsers
+    import tiktok_uploader
+    import tiktok_uploader.upload as upload_module
 
     started = []
+    nav_ms, action_ms = browser_timeouts(cfg)
 
-    def tracked():
-        manager = sync_playwright()
-        real_start = manager.start
+    def get_browser(name="chromium", headless=False, proxy=None, *args, **kwargs):
+        pw = sync_playwright().start()
+        started.append(pw)
+        launch = {"headless": headless, "args": LOW_MEMORY_ARGS}
+        if proxy:
+            launch["proxy"] = {"server": f"{proxy['host']}:{proxy['port']}"}
+        browser = pw.chromium.launch(**launch)
+        context = browser.new_context(viewport={"width": 1280, "height": 720},
+                                      user_agent=tiktok_uploader.config.disguising.user_agent, locale="en-US")
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+        page = context.new_page()
+        tune_page(page, cfg)
+        return page
 
-        def start():
-            pw = real_start()
-            started.append(pw)
-            return pw
-
-        manager.start = start
-        return manager
-
-    original = browsers.sync_playwright
-    browsers.sync_playwright = tracked
+    lib = tiktok_uploader.config
+    saved = (lib.implicit_wait, lib.explicit_wait, lib.uploading_wait)
+    original = upload_module.get_browser
+    upload_module.get_browser = get_browser
+    lib.implicit_wait = action_ms // 1000
+    lib.explicit_wait = max(saved[1], action_ms // 1000)
+    lib.uploading_wait = max(saved[2], 600)  # a Pi uploads slowly
     try:
         yield started
     finally:
-        browsers.sync_playwright = original
+        upload_module.get_browser = original
+        lib.implicit_wait, lib.explicit_wait, lib.uploading_wait = saved
         for pw in started:
             try:
                 pw.stop()
@@ -124,13 +138,13 @@ class TikTok(Platform):
         wide, high, seconds = probe_video(video_path)
         if high <= wide:
             raise PlatformError("TikTok needs a vertical video.")
-        return with_retry(lambda: self._upload_once(video_path, caption, private), log=job.log)
+        return with_retry(lambda: self._upload_once(video_path, caption, private, cfg), log=job.log)
 
-    def _upload_once(self, video_path: Path, caption: str, private: bool) -> str:
+    def _upload_once(self, video_path: Path, caption: str, private: bool, cfg: dict) -> str:
         from tiktok_uploader.upload import TikTokUploader
 
         uploader = None
-        with _quiet_library() as messages, _track_playwright():
+        with _quiet_library() as messages, _track_playwright(cfg):
             try:
                 uploader = TikTokUploader(cookies=str(cookie_store.path_for(self.key)), headless=True, browser="chromium")
                 try:

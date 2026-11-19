@@ -30,6 +30,9 @@ DEFAULTS = {
     "youtube_enabled": False,      # post reels to YouTube Shorts too, through YouTube Studio and a logged-in session
     "youtube_title_template": "{quote}",  # "#Shorts" is added if missing. Cookies live in data/youtube_cookies.txt
     "youtube_visibility": "public",       # public | unlisted | private
+    "browser_nav_timeout_s": 120,         # page loads in the TikTok/YouTube browser. A Pi 3B needs far more than Playwright's 30 s
+    "browser_action_timeout_s": 90,       # clicks, waiting for elements, and the like
+    "browser_block_images": False,        # skip images in the browser to save memory and time. Fonts and video previews are always skipped
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram

@@ -396,6 +396,9 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 | `youtube_enabled` | `false` | Also post reels to YouTube Shorts |
 | `youtube_title_template` | `{quote}` | YouTube title. `#Shorts` is added if it's missing |
 | `youtube_visibility` | `public` | `public`, `unlisted` or `private` |
+| `browser_nav_timeout_s` | `120` | Seconds to wait for a TikTok or YouTube page to load. Raise it on a slow Pi if you see `Timeout ... exceeded` |
+| `browser_action_timeout_s` | `90` | Seconds to wait for clicks and page elements in the browser |
+| `browser_block_images` | `false` | Don't download images in the browser, to save memory and time. Fonts and video previews are always skipped |
 | `ui_password` | `larp` | Panel password (username is `admin`) |
 
 ## Before you post for real

@@ -112,3 +112,54 @@ def save_debug_screenshot(page, key: str) -> str:
         return dest.name
     except Exception:  # noqa: BLE001 - a missing screenshot must never hide the real error
         return ""
+
+
+# ---- browser tuning shared by the browser platforms (TikTok, YouTube) -------------------------------------
+LOW_MEMORY_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",   # /dev/shm is tiny on a Pi
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--no-first-run",
+]
+
+
+def browser_timeouts(cfg: dict) -> tuple[int, int]:
+    """(navigation_ms, action_ms) from the settings, with sane limits. Playwright's own default is 30 s."""
+    def seconds(key, default, lo, hi):
+        try:
+            return max(lo, min(hi, int(cfg.get(key) or default)))
+        except (TypeError, ValueError):
+            return default
+    return seconds("browser_nav_timeout_s", 120, 30, 600) * 1000, seconds("browser_action_timeout_s", 90, 15, 600) * 1000
+
+
+def tune_page(page, cfg: dict) -> None:
+    """Make a slow machine less likely to time out: longer timeouts, goto waits for the DOM instead of every
+    last image and tracker, and fonts, video previews (and optionally images) are never downloaded."""
+    nav_ms, action_ms = browser_timeouts(cfg)
+    page.set_default_timeout(action_ms)
+    page.set_default_navigation_timeout(nav_ms)
+
+    original_goto = page.goto
+
+    def goto(url, **kwargs):
+        kwargs.setdefault("wait_until", "domcontentloaded")
+        kwargs.setdefault("timeout", nav_ms)
+        return original_goto(url, **kwargs)
+
+    page.goto = goto
+
+    skipped = {"font", "media"} | ({"image"} if cfg.get("browser_block_images") else set())
+
+    def route(r):
+        try:
+            if r.request.resource_type in skipped:
+                r.abort()
+            else:
+                r.continue_()
+        except Exception:  # noqa: BLE001 - the page may already be closing
+            pass
+
+    page.route("**/*", route)

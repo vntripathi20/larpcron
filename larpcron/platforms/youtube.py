@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 from . import cookies as cookie_store
-from .base import (CookieExpired, Permanent, Platform, PlatformError, probe_video, save_debug_screenshot,
-                   with_retry)
+from .base import (LOW_MEMORY_ARGS, CookieExpired, Permanent, Platform, PlatformError, probe_video,
+                   save_debug_screenshot, tune_page, with_retry)
 
 # ---- everything that depends on YouTube's page lives here --------------------------------------------
 SELECTORS = {
@@ -159,9 +159,9 @@ class YouTube(Platform):
         check_short(video_path)
         title, description = with_shorts_tag(*split_caption(caption))
         visibility = "private" if private else (cfg.get("youtube_visibility") if cfg.get("youtube_visibility") in VISIBILITIES else "public")
-        return with_retry(lambda: self._upload_once(video_path, title, description, visibility), log=job.log)
+        return with_retry(lambda: self._upload_once(video_path, title, description, visibility, cfg), log=job.log)
 
-    def _upload_once(self, video: Path, title: str, description: str, visibility: str) -> str:
+    def _upload_once(self, video: Path, title: str, description: str, visibility: str, cfg: dict) -> str:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -171,12 +171,11 @@ class YouTube(Platform):
         pw = browser = page = None
         try:
             pw = sync_playwright().start()
-            browser = pw.chromium.launch(headless=True, args=["--disable-dev-shm-usage",
-                                                              "--disable-blink-features=AutomationControlled"])
+            browser = pw.chromium.launch(headless=True, args=LOW_MEMORY_ARGS)
             context = browser.new_context(viewport={"width": 1280, "height": 900}, locale="en-US")
             context.add_cookies(cookie_store.to_playwright(cookie_store.load(self.key)))
-            context.set_default_timeout(STEP_TIMEOUT_MS)
             page = context.new_page()
+            tune_page(page, cfg)
             link = upload_flow(page, video, title, description, visibility, state)
             return link or f"uploaded ({visibility})"
         except PlatformError as e:
