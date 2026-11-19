@@ -118,6 +118,11 @@ def settings():
     cfg["auto_update"] = "auto_update" in f
     cfg["auto_update_deps"] = "auto_update_deps" in f
     cfg["tiktok_enabled"] = "tiktok_enabled" in f
+    for key, default in (("browser_nav_timeout_s", 120), ("browser_action_timeout_s", 90)):
+        try:
+            cfg[key] = max(30, min(600, int(f.get(key, ""))))
+        except ValueError:
+            cfg[key] = cfg.get(key) or default
     cfg["youtube_enabled"] = "youtube_enabled" in f
     cfg["tiktok_caption_template"] = f.get("tiktok_caption_template", "").strip()
     cfg["youtube_title_template"] = f.get("youtube_title_template", "").strip() or "{quote}"

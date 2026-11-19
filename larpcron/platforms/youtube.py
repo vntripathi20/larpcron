@@ -9,6 +9,7 @@ Automated uploads are against YouTube's terms and can get a channel flagged. Use
 import time
 from pathlib import Path
 
+from . import browser as browser_helpers
 from . import cookies as cookie_store
 from .base import (CookieExpired, Permanent, Platform, PlatformError, probe_video, save_debug_screenshot,
                    with_retry)
@@ -32,7 +33,7 @@ SELECTORS = {
 }
 SIGNED_OUT_URL_PARTS = ("accounts.google.com", "ServiceLogin", "/signin")
 NEXT_CLICKS = 3                 # Details, Video elements, Checks, then the Visibility page
-STEP_TIMEOUT_MS = 120_000       # generous: a Pi 3B is slow
+STEP_TIMEOUT_MS = 120_000       # used when a caller doesn't pass its own (the config sets the real ones)
 UPLOAD_TIMEOUT_MS = 20 * 60_000  # waiting for the file to finish uploading and the checks to pass
 # -------------------------------------------------------------------------------------------------------
 
@@ -74,43 +75,51 @@ def _step(state: dict, name: str) -> None:
     state["step"] = name
 
 
-def upload_flow(page, video: Path, title: str, description: str, visibility: str, state: dict) -> str:
-    """The Studio upload dialog, start to finish. Returns the video link if Studio shows one."""
+def upload_flow(page, video: Path, title: str, description: str, visibility: str, state: dict,
+                step_ms: int = STEP_TIMEOUT_MS, nav_ms: int = STEP_TIMEOUT_MS, light=None) -> str:
+    """The Studio upload dialog, start to finish. Returns the video link if Studio shows one.
+
+    step_ms is the wait for each click or selector, nav_ms the wait for a page to load. light, if given, is
+    the switch that blocks images and fonts until the login has been checked."""
     S = SELECTORS
     _step(state, "opening Studio")
-    page.goto(S["studio_url"], wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS)
     try:
-        page.wait_for_selector(S["logged_in_marker"], timeout=STEP_TIMEOUT_MS)
-    except Exception:  # noqa: BLE001
-        if any(part in page.url for part in SIGNED_OUT_URL_PARTS):
-            raise CookieExpired(EXPIRED) from None
-        raise PlatformError("YouTube Studio didn't load (no Create button). It may be asking for a check by hand.") from None
+        browser_helpers.goto(page, S["studio_url"], "youtube", "YouTube Studio", nav_ms)
+        try:
+            page.wait_for_selector(S["logged_in_marker"], timeout=step_ms)
+        except Exception:  # noqa: BLE001
+            if any(part in page.url for part in SIGNED_OUT_URL_PARTS):
+                raise CookieExpired(EXPIRED) from None
+            raise PlatformError("YouTube Studio didn't load (no Create button). It may be asking for a check by hand.") from None
+    finally:
+        if light is not None:
+            light.off()  # the upload itself gets the whole page
     if any(part in page.url for part in SIGNED_OUT_URL_PARTS):
         raise CookieExpired(EXPIRED)
 
     _step(state, "opening the upload dialog")
-    page.click(S["create_button"], timeout=STEP_TIMEOUT_MS)
-    page.click(S["upload_menu_item"], timeout=STEP_TIMEOUT_MS)
-    page.wait_for_selector(S["file_input"], state="attached", timeout=STEP_TIMEOUT_MS)
+    page.click(S["create_button"], timeout=step_ms)
+    page.click(S["upload_menu_item"], timeout=step_ms)
+    page.wait_for_selector(S["file_input"], state="attached", timeout=step_ms)
 
     _step(state, "choosing the file")
-    page.set_input_files(S["file_input"], str(video), timeout=STEP_TIMEOUT_MS)
+    page.set_input_files(S["file_input"], str(video), timeout=step_ms)
 
     _step(state, "filling in the title and description")
-    page.wait_for_selector(S["title_box"], timeout=STEP_TIMEOUT_MS)
-    page.fill(S["title_box"], title, timeout=STEP_TIMEOUT_MS)
-    page.fill(S["description_box"], description, timeout=STEP_TIMEOUT_MS)
+    page.wait_for_selector(S["title_box"], timeout=step_ms)
+    page.fill(S["title_box"], title, timeout=step_ms)
+    page.fill(S["description_box"], description, timeout=step_ms)
 
     _step(state, "marking it not made for kids")
-    page.click(S["not_for_kids"], timeout=STEP_TIMEOUT_MS)
+    page.click(S["not_for_kids"], timeout=step_ms)
 
     _step(state, "going through the dialog")
     for _ in range(NEXT_CLICKS):
-        page.click(S["next_button"], timeout=STEP_TIMEOUT_MS)
+        page.click(S["next_button"], timeout=step_ms)
         time.sleep(1.5)
 
     _step(state, "choosing " + visibility)
-    page.click(S["visibility"][visibility], timeout=STEP_TIMEOUT_MS)
+    page.click(S["visibility"][visibility], timeout=step_ms)
 
     _step(state, "waiting for the upload and checks to finish")
     page.wait_for_function(
@@ -118,10 +127,10 @@ def upload_flow(page, video: Path, title: str, description: str, visibility: str
         arg=S["done_button"], timeout=UPLOAD_TIMEOUT_MS)
 
     _step(state, "publishing")
-    page.click(S["done_button"], timeout=STEP_TIMEOUT_MS)
+    page.click(S["done_button"], timeout=step_ms)
     link = ""
     try:
-        page.wait_for_selector(S["published_close"], timeout=STEP_TIMEOUT_MS)
+        page.wait_for_selector(S["published_close"], timeout=step_ms)
         found = page.query_selector(S["video_link"])
         link = (found.get_attribute("href") if found else "") or ""
         page.click(S["published_close"], timeout=10_000)
@@ -159,25 +168,27 @@ class YouTube(Platform):
         check_short(video_path)
         title, description = with_shorts_tag(*split_caption(caption))
         visibility = "private" if private else (cfg.get("youtube_visibility") if cfg.get("youtube_visibility") in VISIBILITIES else "public")
-        return with_retry(lambda: self._upload_once(video_path, title, description, visibility), log=job.log)
+        return with_retry(lambda: self._upload_once(video_path, title, description, visibility, cfg), log=job.log)
 
-    def _upload_once(self, video: Path, title: str, description: str, visibility: str) -> str:
+    def _upload_once(self, video: Path, title: str, description: str, visibility: str, cfg: dict) -> str:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             raise Permanent("Playwright isn't installed. Run: pip install -r requirements.txt") from None
 
         state = {"step": "starting the browser"}
+        nav_ms, action_ms = browser_helpers.timeouts(cfg)
         pw = browser = page = None
         try:
             pw = sync_playwright().start()
-            browser = pw.chromium.launch(headless=True, args=["--disable-dev-shm-usage",
-                                                              "--disable-blink-features=AutomationControlled"])
-            context = browser.new_context(viewport={"width": 1280, "height": 900}, locale="en-US")
+            browser = pw.chromium.launch(headless=True, args=browser_helpers.launch_args())
+            context = browser.new_context(viewport=browser_helpers.VIEWPORT, locale="en-US")
             context.add_cookies(cookie_store.to_playwright(cookie_store.load(self.key)))
-            context.set_default_timeout(STEP_TIMEOUT_MS)
             page = context.new_page()
-            link = upload_flow(page, video, title, description, visibility, state)
+            page.set_default_timeout(action_ms)
+            page.set_default_navigation_timeout(nav_ms)
+            light = browser_helpers.LightPage(page).on()  # no images, fonts, media or analytics while logging in
+            link = upload_flow(page, video, title, description, visibility, state, step_ms=action_ms, nav_ms=nav_ms, light=light)
             return link or f"uploaded ({visibility})"
         except PlatformError as e:
             self._screenshot(page, e)

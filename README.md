@@ -238,6 +238,8 @@ Uploads go one at a time, with a random pause of 30 to 120 seconds between platf
 
 A Pi 3 is slow at this. Chromium on 1 GB of RAM works, but expect several minutes per upload, and add some swap if the system kills it. A Pi 4 or 5 is much better. If you're on a Pi 3 and the uploads time out, it's the hardware, not your cookies.
 
+To cope with that, the browser starts with low memory flags and a small window, waits only for the page's HTML instead of every image, skips images, fonts, video and analytics while it checks that you're logged in (never during the upload itself), waits up to 120 seconds for a page and 90 for each step, and tries a page once more before it gives up. Both waits are settings (`browser_nav_timeout_s` and `browser_action_timeout_s`, also under Browser timeouts in the Platforms tab). A failed page load leaves a screenshot in `data/debug/`.
+
 ## Automatic updates
 
 If you installed with `deploy/install.sh`, LarpCron can keep itself up to date from this GitHub repo.
@@ -297,6 +299,7 @@ Moving to a new machine? Copy over `data/config.json`. It holds your settings an
 | Music link fails or the reel is silent | The log (bottom of the Home tab) says why. Update yt-dlp (`pip install -U yt-dlp`), and on a Pi run `sudo apt install nodejs`. The video might also be unavailable or region-locked. LarpCron then falls back to local tracks, or a silent reel. |
 | TikTok clip download fails | `pip install -U yt-dlp`. TikTok may also be blocking your IP, so try again later. |
 | TikTok or YouTube says the cookies expired | Export them again from a logged-in browser and paste them in the Platforms tab. They don't last forever. |
+| TikTok or YouTube says a page didn't load in time | Normal on a Pi 3. Raise the browser timeouts in the Platforms tab (try 240 and 180), check the Pi has a decent connection, and add swap if the system is killing Chromium. |
 | TikTok or YouTube upload fails, or "Chromium isn't installed" | Run `bash deploy/install-browser.sh`. For anything else, look at the screenshot in `data/debug/` (the error names it). The page probably changed, and on YouTube the selectors at the top of `larpcron/platforms/youtube.py` are what to fix. |
 | Instagram says the version is out of date | LarpCron upgrades instagrapi and retries once by itself. If password login is still rejected (the panel says "Instagram rejected password login"), log in with a session cookie, steps below. |
 | Instagram login fails / "challenge required" | Open the Instagram app on your phone and approve the "was this you?" prompt, then try again. Delete `data/instagram_session.json` to force a fresh login. New IPs logging in a lot is what usually triggers these. |
@@ -394,6 +397,8 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 | `tiktok_enabled` | `false` | Also post reels to TikTok (needs `deploy/install-browser.sh` and cookies, see above) |
 | `tiktok_caption_template` | empty | TikTok caption. Empty reuses `caption_template`. Cut to 150 characters |
 | `youtube_enabled` | `false` | Also post reels to YouTube Shorts |
+| `browser_nav_timeout_s` | `120` | TikTok and YouTube: seconds a page may take to load (30 to 600) |
+| `browser_action_timeout_s` | `90` | TikTok and YouTube: seconds each click or wait may take (30 to 600) |
 | `youtube_title_template` | `{quote}` | YouTube title. `#Shorts` is added if it's missing |
 | `youtube_visibility` | `public` | `public`, `unlisted` or `private` |
 | `ui_password` | `larp` | Panel password (username is `admin`) |

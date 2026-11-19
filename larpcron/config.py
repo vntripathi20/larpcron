@@ -30,6 +30,8 @@ DEFAULTS = {
     "youtube_enabled": False,      # post reels to YouTube Shorts too, through YouTube Studio and a logged-in session
     "youtube_title_template": "{quote}",  # "#Shorts" is added if missing. Cookies live in data/youtube_cookies.txt
     "youtube_visibility": "public",       # public | unlisted | private
+    "browser_nav_timeout_s": 120,  # TikTok and YouTube: how long a page may take to load (a Pi 3 is slow)
+    "browser_action_timeout_s": 90, # TikTok and YouTube: how long each click or wait may take
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram

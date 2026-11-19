@@ -398,6 +398,16 @@
     </section>
     {% endfor %}
 
+    <section class="block"><details><summary>Browser timeouts</summary>
+      <p class="hint" style="margin-top:10px">How long the hidden browser waits. The defaults suit a Pi 3, which is slow. Raise them if uploads fail with a timeout, and lower them on a fast machine if you want failures sooner.</p>
+      <div class="cols">
+        <div><label class="f" for="browser_nav_timeout_s">Page load (seconds)</label>
+          <input type="number" name="browser_nav_timeout_s" id="browser_nav_timeout_s" min="30" max="600" value="{{ cfg.browser_nav_timeout_s }}"></div>
+        <div><label class="f" for="browser_action_timeout_s">Each click or wait (seconds)</label>
+          <input type="number" name="browser_action_timeout_s" id="browser_action_timeout_s" min="30" max="600" value="{{ cfg.browser_action_timeout_s }}"></div>
+      </div>
+    </details></section>
+
     <section class="block"><details><summary>How to export cookies</summary>
       <p class="hint" style="margin-top:10px">Log in to the site in a desktop browser, then use a cookie export extension (Get cookies.txt LOCALLY and Cookie-Editor both work) on that site and copy the result. Paste it above. Only the cookies for that site are kept. They expire eventually, and the panel says so when they do.</p>
     </details></section>
