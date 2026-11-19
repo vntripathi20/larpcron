@@ -358,6 +358,20 @@
           <input type="password" name="instagram_2fa_seed" id="instagram_2fa_seed" autocomplete="new-password">
           <p class="hint">Posting goes through Instagram's unofficial API. That breaks Instagram's terms and can get the account restricted, so use one you can afford to lose.</p></div>
       </div>
+      <div style="margin-top:12px"><label class="f" for="instagram_sessionid">Session cookie (sessionid){% if cfg.instagram_sessionid %} (saved){% endif %}</label>
+        <input type="password" name="instagram_sessionid" id="instagram_sessionid" autocomplete="new-password" placeholder="Paste it here if password login is rejected">
+        <p class="hint">When this is set, LarpCron logs in with it and skips the password. See the README for how to copy it from a logged-in browser. Treat it like a password.</p></div>
+      <details style="margin-top:12px"><summary>Advanced</summary>
+        <p class="hint" style="margin-top:10px">Only if Instagram keeps saying the app version is out of date. These replace what instagrapi reports at login. Leave them empty otherwise.</p>
+        <div class="cols">
+          <div><label class="f" for="ig_app_version">App version</label>
+            <input type="text" name="ig_app_version" id="ig_app_version" value="{{ cfg.instagram_app_version.get('app_version', '') }}" placeholder="449.0.0.52.84" autocomplete="off"></div>
+          <div><label class="f" for="ig_version_code">Version code</label>
+            <input type="text" name="ig_version_code" id="ig_version_code" value="{{ cfg.instagram_app_version.get('version_code', '') }}" placeholder="1079242191" autocomplete="off" inputmode="numeric"></div>
+          <div class="wide"><label class="f" for="ig_bloks_versioning_id">Bloks versioning id</label>
+            <input type="text" name="ig_bloks_versioning_id" id="ig_bloks_versioning_id" value="{{ cfg.instagram_app_version.get('bloks_versioning_id', '') }}" autocomplete="off"></div>
+        </div>
+      </details>
     </section>
 
     <section class="block">
@@ -393,6 +407,14 @@
       {% elif cfg.auto_update and not up.timer_enabled %}
       <p class="hint" style="margin:6px 0 0">The daily timer isn't switched on. Run <code>sudo systemctl enable --now larpcron-update.timer</code> to start it.</p>
       {% endif %}
+    </section>
+
+    <section class="block">
+      <h3>Instagram and yt-dlp</h3>
+      <label class="tick"><input type="checkbox" name="auto_update_deps" {{ 'checked' if cfg.auto_update_deps }}>
+        <div><b>Keep dependencies up to date</b><span>Each day, instagrapi and yt-dlp are upgraded from PyPI, because they stop working when Instagram, TikTok or YouTube change. Nothing else is upgraded. If a new version won't start, the old one is put back.</span></div></label>
+      <p style="margin:12px 0 0">instagrapi <code>{{ up.packages['instagrapi'] or 'not installed' }}</code> &nbsp; yt-dlp <code>{{ up.packages['yt-dlp'] or 'not installed' }}</code></p>
+      <p style="margin:6px 0 0">Last check: <span id="updDeps">{{ up.deps_text }}</span></p>
     </section>
 
     <section class="block">
@@ -554,7 +576,8 @@ document.documentElement.classList.add('js');
   // Updates tab: "Update now" starts the update unit, then we watch for the result. The panel restarts
   // itself during a real update, so failed polls are expected for a few seconds.
   var btnUpdate = document.getElementById('btnUpdate'), updMsg = document.getElementById('updMsg');
-  var updLast = document.getElementById('updLast'), updEpoch = {{ (up.last.epoch or 0)|tojson }};
+  var updLast = document.getElementById('updLast'), updDeps = document.getElementById('updDeps');
+  var updEpoch = {{ (up.last.epoch or 0)|tojson }}, depsEpoch = {{ (up.deps_last.epoch or 0)|tojson }};
   var updTimer = null, updWaitUntil = 0;
   function updStop(message) {
     clearInterval(updTimer); updTimer = null; btnUpdate.disabled = false; updMsg.textContent = message;
@@ -562,9 +585,12 @@ document.documentElement.classList.add('js');
   function updPoll() {
     fetch('/update/status', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (u) {
       updLast.textContent = u.last_text;
-      if (!u.running && (u.last.epoch || 0) !== updEpoch) {
-        updEpoch = u.last.epoch || 0;
-        if (u.last.result === 'updated') {
+      if (updDeps) { updDeps.textContent = u.deps_text; }
+      var depsNew = (u.deps_last.epoch || 0) !== depsEpoch;
+      var codeNew = (u.last.epoch || 0) !== updEpoch;
+      if (!u.running && (codeNew || depsNew)) {
+        updEpoch = u.last.epoch || 0; depsEpoch = u.deps_last.epoch || 0;
+        if ((codeNew && u.last.result === 'updated') || (depsNew && u.deps_last.result === 'updated')) {
           updStop(dirty ? 'Updated. Reload the page to use the new version.' : 'Updated. Reloading...');
           if (!dirty) setTimeout(function () { location.reload(); }, 1200);
         } else { updStop(''); }

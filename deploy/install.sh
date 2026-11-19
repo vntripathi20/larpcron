@@ -62,9 +62,9 @@ sudoers_text() {
     "$APP_USER" "$SYSTEMCTL" "$SYSTEMCTL"
 }
 
-set_auto_update_setting() {  # set_auto_update_setting true|false  -> data/config.json (other settings kept)
+set_auto_update_setting() {  # set_auto_update_setting true|false  -> auto_update and auto_update_deps in data/config.json (other settings kept)
   if [ "$DRY" -eq 1 ]; then
-    printf '[dry run] would set auto_update=%s in %s/data/config.json\n' "$1" "$REPO"
+    printf '[dry run] would set auto_update and auto_update_deps to %s in %s/data/config.json\n' "$1" "$REPO"
     return
   fi
   "$REPO/.venv/bin/python" - "$REPO/data/config.json" "$1" <<'PYEOF'
@@ -77,6 +77,7 @@ try:
 except Exception:
     cfg = {}
 cfg["auto_update"] = value
+cfg["auto_update_deps"] = value
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
     json.dump(cfg, fh, indent=2)

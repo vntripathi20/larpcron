@@ -4,21 +4,24 @@
 # It runs from larpcron-update.service (the daily timer) and from the panel's "Update now" button
 # (larpcron-update-now.service, which passes --now). You can run it by hand too:
 #
-#   bash deploy/update.sh          # respects the auto_update setting
-#   bash deploy/update.sh --now    # updates even when auto_update is off
+#   bash deploy/update.sh          # respects the auto_update and auto_update_deps settings
+#   bash deploy/update.sh --now    # runs both jobs even when the settings are off
 #
-# What it does: fetch from origin. If origin has new commits that fast-forward cleanly, pull them,
-# reinstall requirements and yt-dlp, restart the service and check that it came back. If pip or the
+# Job 1, code (auto_update): fetch from origin. If origin has new commits that fast-forward cleanly,
+# pull them, reinstall requirements, restart the service and check that it came back. If pip or the
 # restart fails, it goes back to the commit it started from.
+# Job 2, dependencies (auto_update_deps): pip install -U instagrapi yt-dlp, because both break when
+# Instagram, TikTok or YouTube change. The old and new versions go in the log. The service restarts only
+# if a version changed. If the import breaks or the service won't start, it reinstalls the old versions.
 #
 # Safety rules:
-#   - It only pulls from the remote named "origin", with --ff-only. Nothing else is fetched or run
-#     except this script itself, from the checkout.
-#   - It won't start if tracked files have local changes, so a rollback can never throw away your edits.
+#   - Code only comes from the remote named "origin", with --ff-only. The only packages it upgrades are
+#     instagrapi and yt-dlp, from PyPI. Nothing else is fetched or run except this script, from the checkout.
+#   - It won't pull if tracked files have local changes, so a rollback can never throw away your edits.
 #   - It won't start while a reel is rendering or posting (see data/run.lock), and it holds
 #     data/updating while it works so a new run can't start halfway through.
 #   - It never edits or deletes your data/. The only files it writes there are its own:
-#     update.log, update_status.json, updating and update.lock.d.
+#     update.log, update_status.json, deps_status.json, updating and update.lock.d.
 #
 # Test hooks, not needed normally: LARPCRON_RESTART_CMD, LARPCRON_HEALTH_CMD, LARPCRON_HEALTH_WAIT.
 
@@ -27,7 +30,7 @@
 
 set -u
 
-ROOT=""; DATA=""; LOG=""; STATUS=""; PY=""; PIP=""; MODE="auto"
+ROOT=""; DATA=""; LOG=""; STATUS=""; DEPS_STATUS=""; PY=""; PIP=""; MODE="auto"; WANT_NOW=0
 PREV=""; PREV_SHORT=""; NEW_SHORT=""; BRANCH=""; SYSTEMCTL=""
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -35,8 +38,11 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '%s %s\n' "$(ts)" "$*" | tee -a "$LOG"; }
 
 # write_status RESULT MESSAGE [FROM] [TO]  ->  data/update_status.json (the panel reads this)
-write_status() {
-  "$PY" - "$STATUS" "$MODE" "$1" "$2" "${3:-}" "${4:-}" <<'PYEOF' 2>/dev/null || true
+write_status() { write_status_to "$STATUS" "$@"; }
+
+# write_status_to FILE RESULT MESSAGE [FROM] [TO]
+write_status_to() {
+  "$PY" - "$1" "$MODE" "$2" "$3" "${4:-}" "${5:-}" <<'PYEOF' 2>/dev/null || true
 import json, os, sys, time
 path, mode, result, message, old, new = sys.argv[1:7]
 data = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "epoch": int(time.time()), "mode": mode,
@@ -48,15 +54,26 @@ os.replace(tmp, path)
 PYEOF
 }
 
-auto_update_enabled() {
+# setting_enabled KEY: true unless data/config.json says KEY is false (a missing file or key means on)
+setting_enabled() {
   local cfg="$DATA/config.json" v
   [ -f "$cfg" ] || return 0
   v=$("$PY" -c 'import json, sys
 try:
-    print("0" if json.load(open(sys.argv[1])).get("auto_update") is False else "1")
+    print("0" if json.load(open(sys.argv[1])).get(sys.argv[2]) is False else "1")
 except Exception:
-    print("1")' "$cfg" 2>/dev/null) || v=1
+    print("1")' "$cfg" "$1" 2>/dev/null) || v=1
   [ "$v" != "0" ]
+}
+
+# pkg_version NAME: the installed version in the virtualenv, or "none"
+pkg_version() {
+  "$PY" -c 'import sys
+from importlib import metadata
+try:
+    print(metadata.version(sys.argv[1]))
+except Exception:
+    print("none")' "$1" 2>/dev/null || echo none
 }
 
 # busy: true when data/run.lock says a render or post is in progress.
@@ -149,19 +166,93 @@ rollback() {
   return 1
 }
 
+# deps_stage: pip install -U instagrapi yt-dlp, with a rollback to the versions it started from
+deps_stage() {
+  local old_ig old_yt new_ig new_yt why changed=0 summary
+
+  if [ "$WANT_NOW" -eq 0 ] && ! setting_enabled auto_update_deps; then
+    log "Keeping dependencies up to date is switched off in the panel, so skipping instagrapi and yt-dlp."
+    return 0
+  fi
+  if [ ! -x "$PIP" ]; then
+    log "No virtualenv found at .venv, so there's nowhere to upgrade instagrapi and yt-dlp. Run deploy/install.sh."
+    write_status_to "$DEPS_STATUS" failed "No virtualenv at .venv. Run deploy/install.sh."
+    return 1
+  fi
+
+  # Same handshake as the code stage: marker first, then look for a running reel.
+  touch "$DATA/updating"
+  if busy; then
+    log "Skipped the instagrapi and yt-dlp upgrade: a reel is rendering or posting. Will try again next run."
+    write_status_to "$DEPS_STATUS" skipped "A reel was being made, so the upgrade waits for the next run."
+    return 0
+  fi
+
+  old_ig="$(pkg_version instagrapi)"; old_yt="$(pkg_version yt-dlp)"
+  log "Checking instagrapi (now $old_ig) and yt-dlp (now $old_yt)"
+
+  if ! pip_install -r requirements.txt; then deps_rollback "$old_ig" "$old_yt" "pip install -r requirements.txt failed"; return 1; fi
+  if ! pip_install -U instagrapi yt-dlp; then deps_rollback "$old_ig" "$old_yt" "pip install -U instagrapi yt-dlp failed"; return 1; fi
+
+  new_ig="$(pkg_version instagrapi)"; new_yt="$(pkg_version yt-dlp)"
+  [ "$new_ig" != "$old_ig" ] && log "instagrapi: $old_ig -> $new_ig" || log "instagrapi: $old_ig (no change)"
+  [ "$new_yt" != "$old_yt" ] && log "yt-dlp: $old_yt -> $new_yt" || log "yt-dlp: $old_yt (no change)"
+  { [ "$new_ig" != "$old_ig" ] || [ "$new_yt" != "$old_yt" ]; } && changed=1
+
+  if [ "$changed" -eq 1 ]; then
+    if ! "$PY" -c 'import instagrapi, yt_dlp' >>"$LOG" 2>&1; then
+      deps_rollback "$old_ig" "$old_yt" "the new versions would not import"; return 1
+    fi
+    if has_service; then
+      if ! restart_service >>"$LOG" 2>&1; then deps_rollback "$old_ig" "$old_yt" "restarting the service failed"; return 1; fi
+      if ! healthy; then deps_rollback "$old_ig" "$old_yt" "the service was not running after the restart"; return 1; fi
+      log "Upgraded and restarted the service."
+    else
+      log "Upgraded. There's no systemd service here, so restart LarpCron yourself."
+    fi
+    summary="instagrapi $old_ig to $new_ig, yt-dlp $old_yt to $new_yt"
+    write_status_to "$DEPS_STATUS" updated "$summary" "$old_ig" "$new_ig"
+  else
+    write_status_to "$DEPS_STATUS" up-to-date "instagrapi $new_ig, yt-dlp $new_yt"
+  fi
+  return 0
+}
+
+# deps_rollback OLD_INSTAGRAPI OLD_YTDLP REASON: put the old versions back and restart
+deps_rollback() {
+  local pkgs=()
+  log "Putting back instagrapi $1 and yt-dlp $2 because: $3"
+  [ "$1" != "none" ] && pkgs+=("instagrapi==$1")
+  [ "$2" != "none" ] && pkgs+=("yt-dlp==$2")
+  if [ "${#pkgs[@]}" -gt 0 ] && ! pip_install "${pkgs[@]}"; then
+    log "Could not reinstall the old versions. This needs a look by hand: ${pkgs[*]}"
+    write_status_to "$DEPS_STATUS" failed "$3. Putting the old versions back failed too, so check them by hand." "$1" "$2"
+    return 1
+  fi
+  if has_service; then
+    if restart_service >>"$LOG" 2>&1 && healthy; then
+      log "Old versions are back and the service is running."
+    else
+      log "Old versions are back, but the service did not come back. Run: sudo systemctl status larpcron"
+    fi
+  fi
+  write_status_to "$DEPS_STATUS" rolled-back "The upgrade failed ($3), so the old versions are back." "$1" "$2"
+  return 1
+}
+
 main() {
-  local want_now=0 arg new_count
+  local arg rc_code rc_deps
   for arg in "$@"; do
     case "$arg" in
-      --now) want_now=1; MODE="manual" ;;
-      -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; return 0 ;;
+      --now) WANT_NOW=1; MODE="manual" ;;
+      -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; return 0 ;;
       *) echo "Unknown option: $arg (try --help)" >&2; return 2 ;;
     esac
   done
 
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || return 2
   cd "$ROOT" || return 2
-  DATA="$ROOT/data"; LOG="$DATA/update.log"; STATUS="$DATA/update_status.json"
+  DATA="$ROOT/data"; LOG="$DATA/update.log"; STATUS="$DATA/update_status.json"; DEPS_STATUS="$DATA/deps_status.json"
   mkdir -p "$DATA" || return 2
   export GIT_TERMINAL_PROMPT=0
   SYSTEMCTL="$(command -v systemctl || true)"
@@ -174,7 +265,16 @@ main() {
   fi
   trap cleanup EXIT
 
-  if [ "$want_now" -eq 0 ] && ! auto_update_enabled; then
+  # Two independent jobs: new LarpCron code (auto_update), then newer instagrapi and yt-dlp (auto_update_deps).
+  code_stage; rc_code=$?
+  deps_stage; rc_deps=$?
+  [ "$rc_code" -ne 0 ] && return "$rc_code"
+  return "$rc_deps"
+}
+
+code_stage() {
+  local new_count
+  if [ "$WANT_NOW" -eq 0 ] && ! setting_enabled auto_update; then
     log "Automatic updates are switched off in the panel, so nothing to do."
     return 0
   fi
@@ -251,7 +351,6 @@ main() {
   NEW_SHORT="$(git rev-parse --short HEAD)"
 
   if ! pip_install -r requirements.txt; then rollback "pip install -r requirements.txt failed"; return 1; fi
-  if ! pip_install -U yt-dlp; then rollback "pip install -U yt-dlp failed"; return 1; fi
 
   if has_service; then
     if ! restart_service >>"$LOG" 2>&1; then rollback "restarting the service failed"; return 1; fi

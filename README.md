@@ -217,18 +217,30 @@ The scheduler fires at every configured time each day and checks the day rules r
 
 If you installed with `deploy/install.sh`, LarpCron can keep itself up to date from this GitHub repo.
 
-Around 4 AM every day (plus a random delay of up to half an hour, so not every Pi hits GitHub at the same second), a small script checks whether the repo has new commits. If it does, it pulls them, reinstalls the requirements, upgrades yt-dlp, restarts LarpCron and checks that it came back up. If pip or the restart fails, or LarpCron isn't running afterward, it rolls back to the version you had and writes down what went wrong.
+Around 4 AM every day (plus a random delay of up to half an hour, so not every Pi hits GitHub at the same second), a small script checks whether the repo has new commits. If it does, it pulls them, reinstalls the requirements, restarts LarpCron and checks that it came back up. If pip or the restart fails, or LarpCron isn't running afterward, it rolls back to the version you had and writes down what went wrong.
+
+The same run also upgrades `instagrapi` and `yt-dlp` from PyPI, because both stop working whenever Instagram, TikTok or YouTube change something (the classic one is instagrapi's "Your version of Instagram is out of date" login error). The old and new version of each go in the log, and LarpCron only restarts if one of them actually changed. If the new version won't import, or LarpCron won't start with it, the old versions are put back with `pip install instagrapi==<old> yt-dlp==<old>`.
 
 It sticks to a few rules:
 
-- It only pulls from the `origin` remote of your checkout, fast-forward only, and the only script it runs from the repo is `deploy/update.sh`.
+- It only pulls from the `origin` remote of your checkout, fast-forward only, and the only script it runs from the repo is `deploy/update.sh`. The only packages it upgrades are `instagrapi` and `yt-dlp`. Everything else stays as `requirements.txt` says.
 - It waits if a reel is rendering or posting, and tries again next time. A new run also won't start while an update is being installed.
 - It skips the update if you've edited tracked files in the install folder, so it never overwrites your changes.
-- It never touches your settings or anything else in `data/`. The only files it writes there are its own: `update.log`, `update_status.json` and two short-lived lock files.
+- It never touches your settings or anything else in `data/`. The only files it writes there are its own: `update.log`, `update_status.json`, `deps_status.json` and two short-lived lock files.
 
-The Updates tab in the panel has the switch ("Update automatically"), the version you're on, how the last update went, and an Update now button that runs the same update right away, even with the daily updates off. To turn the daily updates off, untick the box and save, and the daily check will exit as soon as it starts. To stop the timer completely, run `sudo systemctl disable --now larpcron-update.timer`. You can also pass `--no-auto-update` to the installer so it never gets turned on.
+The Updates tab in the panel has two switches ("Update automatically" for LarpCron itself and "Keep dependencies up to date" for instagrapi and yt-dlp), the installed instagrapi and yt-dlp versions, how the last runs went, and an Update now button that does both jobs right away, even with the switches off. To turn one off, untick it and save, and that part of the daily check exits as soon as it starts. To stop the timer completely, run `sudo systemctl disable --now larpcron-update.timer`. You can also pass `--no-auto-update` to the installer so it never gets turned on.
 
 The full history is in `data/update.log`, and `journalctl -u larpcron-update` shows what the timer ran. To run an update by hand: `bash deploy/update.sh --now`.
+
+If Instagram says the app is out of date while posting, LarpCron fixes that on its own, once: it upgrades instagrapi, deletes `data/instagram_session.json` and logs in again, and it writes what it did to the log. It won't do that more than once every six hours. If the newest instagrapi still gets that error, log in with a session cookie instead (see [Instagram says the version is out of date](#when-stuff-breaks) below), or fill in the app version fields under Advanced in the Accounts tab, which get applied before every login.
+
+No systemd, or you'd rather use cron? Skip the timer and add this line with `crontab -e` (adjust the path). It runs both jobs daily at 4:07 AM, and the script still checks the two switches and waits for a running reel:
+
+```
+7 4 * * * cd /home/pi/LarpCron && bash deploy/update.sh >> data/update.log 2>&1
+```
+
+The restart needs sudo. The installer's sudo rule covers that, and on a manual install you can use root's crontab (`sudo crontab -e`) or restart LarpCron by hand afterward.
 
 One thing to be aware of: with automatic updates on, whatever lands on the repo's main branch runs on your Pi, including the packages it installs. That's true of any auto-updater, so leave it off if you'd rather read the changes first and `git pull` yourself. If you cloned a fork, updates come from the fork, since the updater just follows whatever `origin` points at.
 
@@ -259,12 +271,25 @@ Moving to a new machine? Copy over `data/config.json`. It holds your settings an
 | Quote text looks tiny or the font is off on Linux | `sudo apt install fonts-dejavu-core`. |
 | Music link fails or the reel is silent | The log (bottom of the Home tab) says why. Update yt-dlp (`pip install -U yt-dlp`), and on a Pi run `sudo apt install nodejs`. The video might also be unavailable or region-locked. LarpCron then falls back to local tracks, or a silent reel. |
 | TikTok clip download fails | `pip install -U yt-dlp`. TikTok may also be blocking your IP, so try again later. |
+| Instagram says the version is out of date | LarpCron upgrades instagrapi and retries once by itself. If password login is still rejected (the panel says "Instagram rejected password login"), log in with a session cookie, steps below. |
 | Instagram login fails / "challenge required" | Open the Instagram app on your phone and approve the "was this you?" prompt, then try again. Delete `data/instagram_session.json` to force a fresh login. New IPs logging in a lot is what usually triggers these. |
 | Reel posted but muted | Instagram caught copyrighted music. Use royalty-free tracks. |
 | Schedule didn't fire | "Post automatically" has to be ticked and saved, LarpCron had to be running at that time, and the timezone has to be right (Schedule tab). A run that's up to 10 minutes late still fires. |
 | `pip install` fails on a Pi | Update first (`sudo apt full-upgrade`), make sure you're on 64-bit OS, and retry. Big wheels can time out on a slow connection. |
 | Updates aren't happening | Look at `data/update.log`. The usual reasons: the toggle on the Updates tab is off, a reel was being made (it tries again next time), someone edited files in the install folder, or the timer isn't on (`systemctl list-timers | grep larpcron`). |
 | Port 8080 already in use | Run it on another port: `python -m larpcron --port 9000`. |
+
+### Logging in with a session cookie
+
+Instagram sometimes turns away password logins from instagrapi with "Your version of Instagram is out of date" (it's [instagrapi issue 2881](https://github.com/subzeroid/instagrapi/issues/2881)), and no upgrade fixes it until the library catches up. A browser that's already logged in gets around it, because it can hand LarpCron its `sessionid` cookie:
+
+1. Log in to instagram.com in a desktop browser, on the account you post from.
+2. Open the developer tools (F12, or Ctrl+Shift+I) and go to the Application tab. In Firefox it's called Storage.
+3. Open Cookies, then `https://www.instagram.com`, and find the row named `sessionid`.
+4. Double-click its Value and copy it. It's a long string, usually starting with a number and `%3A`.
+5. Paste it into Session cookie (sessionid) in the Accounts tab and save.
+
+From then on LarpCron tries its saved session first, then this cookie, and only uses the username and password if neither works. Treat the cookie like a password: anyone who has it can use the account, and it's stored in plain text in `data/config.json` like your other credentials. Don't use the browser's Log out button afterward, because that kills the cookie. Just close the tab. When it eventually expires, the panel tells you Instagram rejected the cookie, and you paste a fresh one.
 
 ---
 
@@ -336,6 +361,9 @@ Everything is editable in the panel and saved in `data/config.json`, which is gi
 | `enabled` | `false` | Post automatically on the schedule |
 | `dry_run` | `true` | Make reels but never post them |
 | `auto_update` | `true` | Check this GitHub repo daily and install new versions (needs the `deploy/install.sh` setup) |
+| `auto_update_deps` | `true` | Upgrade instagrapi and yt-dlp daily, and put the old versions back if the new ones fail |
+| `instagram_sessionid` | empty | The `sessionid` cookie of a logged-in browser. When set, LarpCron uses it instead of the password |
+| `instagram_app_version` | empty | Advanced. An object with `app_version`, `version_code` and `bloks_versioning_id`, applied before login, so you can follow Instagram's version changes without a code update |
 | `ui_password` | `larp` | Panel password (username is `admin`) |
 
 ## Before you post for real

@@ -1,5 +1,6 @@
 """Web control panel: settings, preview, post-now, logs. Runs on 0.0.0.0 so it works over a Pi access point."""
 import hmac
+import re
 import zoneinfo
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -93,13 +94,20 @@ def settings():
     for k in ("instagram_username", "pexels_api_key", "pixabay_api_key", "tiktok_profile", "timezone", "hashtags", "caption_template", "watermark"):
         cfg[k] = f.get(k, "").strip()
     # Secrets: blank field = keep existing value.
-    for k in ("instagram_password", "instagram_2fa_seed", "ui_password"):
+    for k in ("instagram_password", "instagram_2fa_seed", "instagram_sessionid", "ui_password"):
         if f.get(k, "").strip():
             cfg[k] = f[k].strip()
     cfg["enabled"] = "enabled" in f
     cfg["dry_run"] = "dry_run" in f
     cfg["smart_music_start"] = "smart_music_start" in f
     cfg["auto_update"] = "auto_update" in f
+    cfg["auto_update_deps"] = "auto_update_deps" in f
+    override = {
+        "app_version": re.sub(r"[^0-9.]", "", f.get("ig_app_version", ""))[:40],
+        "version_code": re.sub(r"\D", "", f.get("ig_version_code", ""))[:20],
+        "bloks_versioning_id": re.sub(r"[^0-9a-fA-F]", "", f.get("ig_bloks_versioning_id", ""))[:80],
+    }
+    cfg["instagram_app_version"] = {k: v for k, v in override.items() if v}
     cfg["content_mode"] = f.get("content_mode", "reel") if f.get("content_mode") in ("reel", "photo", "mix") else "reel"
     cfg["footage_source"] = f.get("footage_source") if f.get("footage_source") in ("any", "online", "pexels", "pixabay", "tiktok", "local") else "any"
     cfg["quote_source"] =f.get("quote_source", "mixed") if f.get("quote_source") in ("local", "online", "mixed") else "mixed"

@@ -14,6 +14,8 @@ import time
 from . import config, job
 
 STATUS_FILE = config.DATA / "update_status.json"
+DEPS_STATUS_FILE = config.DATA / "deps_status.json"   # result of the instagrapi + yt-dlp upgrade job
+PACKAGES = ("instagrapi", "yt-dlp")                   # the only packages the updater upgrades
 LOG_FILE = config.DATA / "update.log"
 UPDATING_FILE = config.DATA / "updating"
 MARKER_MAX_AGE = 20 * 60
@@ -69,6 +71,40 @@ def describe_last(last: dict | None = None) -> str:
     return text
 
 
+def installed_versions() -> dict:
+    """Versions of the upgradeable packages, as this running panel sees them."""
+    from importlib import metadata
+
+    out = {}
+    for name in PACKAGES:
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            out[name] = ""
+    return out
+
+
+def deps_last() -> dict:
+    try:
+        return json.loads(DEPS_STATUS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def describe_deps(last: dict | None = None) -> str:
+    last = deps_last() if last is None else last
+    if not last:
+        return "Not checked yet."
+    when = last.get("time", "an unknown date")
+    result, message = last.get("result", ""), last.get("message", "")
+    if result == "updated":
+        return f"Upgraded on {when}: {message}."
+    if result == "up-to-date":
+        return f"Checked on {when}. Nothing newer was available."
+    word = RESULT_WORDS.get(result, result or "Ran")
+    return f"{word} on {when}." + (" " + message if message else "")
+
+
 def version() -> dict:
     out = _git("log", "-1", "--format=%h|%cs|%s")
     if not out:
@@ -112,13 +148,15 @@ def log_tail(lines: int = 15) -> str:
 def live() -> dict:
     """Cheap and safe to poll: only reads small files."""
     last = last_result()
-    return {"running": running(), "last": last, "last_text": describe_last(last)}
+    deps = deps_last()
+    return {"running": running(), "last": last, "last_text": describe_last(last),
+            "deps_last": deps, "deps_text": describe_deps(deps)}
 
 
 def info() -> dict:
     """Everything the Updates tab shows when the page loads."""
     return {**live(), "version": version(), "origin": origin_url(), "can_update": can_update_now(),
-            "timer_enabled": timer_enabled(), "log": log_tail()}
+            "timer_enabled": timer_enabled(), "log": log_tail(), "packages": installed_versions()}
 
 
 def request_update() -> tuple[bool, str]:

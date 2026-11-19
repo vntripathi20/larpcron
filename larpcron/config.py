@@ -22,6 +22,9 @@ DEFAULTS = {
     "smart_music_start": True,     # start music at its best part (manual start times always win)
     "music_links": [],             # YouTube links, one per line: "<url> [start e.g. 1:12]"
     "auto_update": True,           # pull updates from the project's GitHub repo (see deploy/update.sh)
+    "auto_update_deps": True,      # keep instagrapi and yt-dlp current (they break when the platforms change)
+    "instagram_sessionid": "",     # sessionid cookie from a logged-in browser; skips password login when set
+    "instagram_app_version": {},   # advanced override: {"app_version", "version_code", "bloks_versioning_id"}
     "ui_password": "larp",         # password for this web UI (username: admin). CHANGE IT.
     "enabled": False,              # scheduler on/off
     "dry_run": True,               # True = render everything but never touch Instagram
@@ -57,6 +60,9 @@ def load() -> dict:
             cfg.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             pass
+    if not isinstance(cfg.get("instagram_app_version"), dict):  # an older config stored a plain string
+        old = cfg.get("instagram_app_version")
+        cfg["instagram_app_version"] = {"app_version": old} if old else {}
     return cfg
 
 
